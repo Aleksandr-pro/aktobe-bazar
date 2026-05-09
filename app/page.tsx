@@ -1,61 +1,63 @@
-'use client';
+import { Plus, Search, MapPin } from 'lucide-react';
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100">
       {/* Header */}
-      <header className="bg-white shadow-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+      <header className="border-b border-zinc-800 bg-zinc-950 sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold text-2xl">A</div>
+            <div className="w-9 h-9 bg-emerald-600 rounded-xl flex items-center justify-center">
+              <span className="text-white font-bold text-xl">A</span>
+            </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">AktobeBazar</h1>
-              <p className="text-xs text-gray-500 -mt-1">Актюбинская область</p>
+              <h1 className="text-2xl font-semibold tracking-tight">AktobeBazar</h1>
+              <p className="text-xs text-zinc-500 -mt-1">Актюбинская область</p>
             </div>
           </div>
-          <nav className="hidden md:flex gap-8 text-sm font-medium">
-            <a href="#" className="hover:text-blue-600">Объявления</a>
-            <a href="#" className="hover:text-blue-600">Подать объявление</a>
-            <a href="#" className="hover:text-blue-600">Категории</a>
+
+          <nav className="hidden md:flex items-center gap-8 text-sm">
+            <a href="#" className="hover:text-white transition-colors">Объявления</a>
+            <a href="#" className="hover:text-white transition-colors">Категории</a>
+            <a href="#" className="hover:text-white transition-colors">Как это работает</a>
           </nav>
+
           <div className="flex items-center gap-4">
-            <button className="px-5 py-2 text-sm font-medium border rounded-xl hover:bg-gray-50">Войти</button>
-            <button className="px-5 py-2 text-sm font-medium bg-blue-600 text-white rounded-xl hover:bg-blue-700">Подать объявление</button>
+            <button className="px-5 py-2.5 text-sm font-medium border border-zinc-700 hover:bg-zinc-900 rounded-xl transition-colors flex items-center gap-2">
+              <Search className="w-4 h-4" />
+              Поиск
+            </button>
+            <a href="/post" className="bg-emerald-600 hover:bg-emerald-700 px-6 py-2.5 rounded-xl font-medium flex items-center gap-2 transition-colors">
+              <Plus className="w-5 h-5" />
+              Подать объявление
+            </a>
           </div>
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="max-w-7xl mx-auto px-4 py-20 text-center">
-        <h2 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
-          Объявления<br />только для Актобе и области
-        </h2>
-        <p className="text-xl text-gray-600 max-w-2xl mx-auto mb-10">
-          Продавай, покупай, ищи работу и услуги — всё в одном месте. Только местные.
-        </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <button className="px-10 py-4 bg-blue-600 text-white rounded-2xl text-lg font-semibold hover:bg-blue-700">
-            Подать объявление бесплатно
-          </button>
-          <button className="px-10 py-4 border border-gray-300 rounded-2xl text-lg font-semibold hover:bg-gray-50">
-            Смотреть объявления
-          </button>
-        </div>
-      </section>
+      <main>
+        <div className="max-w-6xl mx-auto px-6 pt-20 pb-24 text-center">
+          <div className="inline-flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-1.5 mb-6">
+            <MapPin className="w-4 h-4 text-emerald-500" />
+            <span className="text-sm text-zinc-400">Только Актюбинская область</span>
+          </div>
 
-      {/* Categories */}
-      <section className="max-w-7xl mx-auto px-4 pb-20">
-        <h3 className="text-3xl font-bold text-center mb-10">Категории</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {['Недвижимость', 'Авто и транспорт', 'Работа', 'Услуги', 'Личные вещи', 'Электроника', 'Дом и сад', 'Животные'].map((cat, i) => (
-            <div key={i} className="bg-white p-6 rounded-3xl shadow-sm hover:shadow-md transition-all cursor-pointer border border-transparent hover:border-blue-200">
-              <div className="text-4xl mb-4">🏠</div>
-              <h4 className="font-semibold text-xl">{cat}</h4>
-              <p className="text-sm text-gray-500 mt-1">120 объявлений</p>
-            </div>
-          ))}
+          <h1 className="text-6xl md:text-7xl font-semibold tracking-tighter mb-6 leading-none">
+            Локальная доска<br />объявлений
+          </h1>
+          <p className="text-2xl text-zinc-400 max-w-lg mx-auto mb-12">
+            Покупай, продавай и находи работу рядом с домом
+          </p>
+
+          <a 
+            href="/post" 
+            className="inline-flex items-center gap-3 bg-white text-black hover:bg-zinc-200 px-10 py-5 rounded-2xl text-xl font-semibold transition-all active:scale-[0.98]"
+          >
+            <Plus className="w-6 h-6" />
+            Разместить объявление бесплатно
+          </a>
         </div>
-      </section>
+      </main>
     </div>
   );
 }
