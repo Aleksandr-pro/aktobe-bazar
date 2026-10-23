@@ -46,6 +46,8 @@ public class FxService extends Service implements FxRenderer.StatsListener {
     public static final String ACTION_RELOAD = "kz.bazar.fx.RELOAD";
     /** Следующий пресет качества (кнопка в уведомлении). */
     public static final String ACTION_CYCLE_QUALITY = "kz.bazar.fx.CYCLE_QUALITY";
+    /** Скрыть/показать оверлей из уведомления (игра и скриншоты). */
+    public static final String ACTION_TOGGLE_OVERLAY = "kz.bazar.fx.TOGGLE_OVERLAY";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_DATA = "data";
 
@@ -75,6 +77,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
     private Handler handler;
     private NotificationManager notificationManager;
     private String lastStats = "";
+    private float lastLatencyMs = -1f;
     private long lastNotificationUpdate;
     private boolean running;
 
@@ -113,6 +116,14 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                 return START_NOT_STICKY;
             }
             reloadSettings(false);
+            return START_STICKY;
+        }
+        if (ACTION_TOGGLE_OVERLAY.equals(action)) {
+            if (!running) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            setOverlayHidden(!overlayHidden);
             return START_STICKY;
         }
         if (ACTION_CYCLE_QUALITY.equals(action)) {
@@ -469,6 +480,26 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             panel.addView(item);
         }
 
+        final TextView splitItem = new TextView(this);
+        splitItem.setText(renderer != null && renderer.isSplitOn()
+                ? "◐ Сравнение «до/после»: включено"
+                : "◯ Сравнение «до/после» (половина экрана)");
+        splitItem.setTextColor(0xFF6EE7B7);
+        splitItem.setTextSize(12f);
+        splitItem.setPadding(0, pad, 0, pad / 2);
+        splitItem.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (renderer != null) {
+                    renderer.setSplit(renderer.isSplitOn() ? 0f : 0.5f);
+                    FxLog.i(renderer.isSplitOn() ? "Сравнение включено" : "Сравнение выключено");
+                }
+                hideQualityPanel();
+                updateBubbleText();
+            }
+        });
+        panel.addView(splitItem);
+
         final TextView hideItem = new TextView(this);
         hideItem.setText(overlayHidden
                 ? "▣ Показать оверлей BazarFX"
@@ -614,6 +645,11 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         if (overlayHidden) {
             bubble.setText("ON");
             bubble.setBackgroundColor(0xB34A3508);
+            return;
+        }
+        if (renderer != null && renderer.isSplitOn()) {
+            bubble.setText("◐");
+            bubble.setBackgroundColor(0xB3341D6B);
             return;
         }
         bubble.setText(bypass ? "OFF" : "FX");
@@ -762,8 +798,11 @@ public class FxService extends Service implements FxRenderer.StatsListener {
     }
 
     @Override
-    public void onStats(float captureFps, float presentFps, int lowW, int lowH, int fullW, int fullH) {
-        lastStats = String.format("%.0f→%.0f fps · %d×%d→%d×%d", captureFps, presentFps, lowW, lowH, fullW, fullH);
+    public void onStats(float captureFps, float presentFps, int lowW, int lowH, int fullW, int fullH,
+                        float latencyMs) {
+        lastStats = String.format("%.0f fps · %d×%d→%d×%d", presentFps, lowW, lowH, fullW, fullH)
+                + (latencyMs >= 0 ? String.format(" · задержка %.0f мс", latencyMs) : "");
+        lastLatencyMs = latencyMs;
         long now = System.currentTimeMillis();
         if (now - lastNotificationUpdate > 4000) { // раз в 4 с достаточно, реже дёргаем систему
             lastNotificationUpdate = now;
@@ -870,6 +909,13 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
 
+        Intent overlayIntent = new Intent(this, FxService.class).setAction(ACTION_TOGGLE_OVERLAY);
+        PendingIntent overlayPending = PendingIntent.getService(
+                this, 5, overlayIntent,
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                        ? PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
+                        : PendingIntent.FLAG_UPDATE_CURRENT);
+
         Intent qualityIntent = new Intent(this, FxService.class).setAction(ACTION_CYCLE_QUALITY);
         PendingIntent qualityPending = PendingIntent.getService(
                 this, 4, qualityIntent,
@@ -885,6 +931,8 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                 .setOngoing(true)
                 .setContentIntent(openPending)
                 .addAction(new Notification.Action.Builder(null, "Качество", qualityPending).build())
+                .addAction(new Notification.Action.Builder(null,
+                        overlayHidden ? "Показать" : "Скрыть", overlayPending).build())
                 .addAction(new Notification.Action.Builder(null, "Стоп", stopPending).build())
                 .build();
     }

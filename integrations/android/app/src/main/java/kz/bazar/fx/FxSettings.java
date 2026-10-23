@@ -39,7 +39,9 @@ public final class FxSettings {
     public boolean temporal = true;   // TAA (без motion vectors даёт шлейфы)
     public boolean frameGen = false;   // генерация промежуточных кадров (экспериментально)
     public boolean showBubble = true;  // плавающая кнопка
-    public boolean secureOverlay = true; // исключить свой оверлей из захвата (FLAG_SECURE)
+    public boolean secureOverlay = true;
+    public boolean autoQuality = true;   // сам снижает масштаб, если не успевает
+    public boolean splitCompare = false; // слева оригинал, справа обработка
     public int flowStep = 3;           // шаг сетки блочного потока (для frameGen)
     public int flowSearch = 4;         // радиус поиска в шагах сетки
     public float flowTaps = 1f;        // окно сопоставления: 1 = 3x3, 2 = 5x5
@@ -138,6 +140,8 @@ public final class FxSettings {
         s.frameGen = p.getBoolean("frameGen", s.frameGen);
         s.showBubble = p.getBoolean("showBubble", s.showBubble);
         s.secureOverlay = p.getBoolean("secureOverlay", s.secureOverlay);
+        s.autoQuality = p.getBoolean("autoQuality", s.autoQuality);
+        s.splitCompare = p.getBoolean("splitCompare", s.splitCompare);
         s.flowStep = p.getInt("flowStep", s.flowStep);
         s.flowSearch = p.getInt("flowSearch", s.flowSearch);
         s.flowTaps = p.getFloat("flowTaps", s.flowTaps);
@@ -156,6 +160,8 @@ public final class FxSettings {
                 .putBoolean("frameGen", frameGen)
                 .putBoolean("showBubble", showBubble)
                 .putBoolean("secureOverlay", secureOverlay)
+                .putBoolean("autoQuality", autoQuality)
+                .putBoolean("splitCompare", splitCompare)
                 .putInt("flowStep", flowStep)
                 .putInt("flowSearch", flowSearch)
                 .putFloat("flowTaps", flowTaps)

@@ -31,7 +31,8 @@ import javax.microedition.khronos.opengles.GL10;
 public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableListener {
 
     public interface StatsListener {
-        void onStats(float captureFps, float presentFps, int lowW, int lowH, int fullW, int fullH);
+        void onStats(float captureFps, float presentFps, int lowW, int lowH, int fullW, int fullH,
+                     float latencyMs);
 
         /** Непоправимая ошибка пайплайна — сервис должен аккуратно выключиться. */
         void onError(String message);
@@ -326,14 +327,17 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     /** Вывод на экран + (опционально) интерполяция между двумя кадрами. */
     private static final String FRAG_DISPLAY = ""
             + "#version 300 es\n"
+            + "#extension GL_OES_EGL_image_external_essl3 : require\n"
             + "precision highp float;\n"
             + "in vec2 vUV;\n"
             + "out vec4 fragColor;\n"
             + "uniform sampler2D tCurrent;\n"
             + "uniform sampler2D tPrevious;\n"
             + "uniform sampler2D tVelocity;\n"
+            + "uniform samplerExternalOES tRawOes;\n"
             + "uniform float uPhase;\n"
             + "uniform float uVelRange;\n"
+            + "uniform float uSplit;\n"
             + "void main() {\n"
             + "  vec3 col = texture(tCurrent, vUV).rgb;\n"
             + "  if (uPhase > 0.001) {\n"
@@ -341,6 +345,14 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             + "    vec3 prev = texture(tPrevious, clamp(vUV - vel * uPhase, vec2(0.0), vec2(1.0))).rgb;\n"
             + "    vec3 nxt = texture(tCurrent, clamp(vUV + vel * (1.0 - uPhase), vec2(0.0), vec2(1.0))).rgb;\n"
             + "    col = mix(prev, nxt, uPhase);\n"
+            + "  }\n"
+            + "  if (uSplit > 0.0) {\n"
+            // Слева — что игра отдала, справа — что сделал BazarFX. Единственный
+            // честный способ увидеть разницу на живой картинке.
+            + "    vec2 rawUV = vec2(vUV.x, 1.0 - vUV.y);\n"
+            + "    vec3 raw = texture(tRawOes, rawUV).rgb;\n"
+            + "    col = vUV.x < uSplit ? raw : col;\n"
+            + "    if (abs(vUV.x - uSplit) < 0.0012) col = vec3(0.2, 0.95, 0.6);\n"
             + "  }\n"
             + "  fragColor = vec4(col, 1.0);\n"
             + "}\n";
@@ -390,6 +402,13 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private volatile boolean bypass;
     /** false — вывод на экран выключен (пользователь скрыл оверлей, чтобы играть/делать скриншоты). */
     private volatile boolean outputEnabled = true;
+    /** 0 — выключено, иначе доля экрана, где показывается оригинал (сравнение «до/после»). */
+    private volatile float split = 0f;
+    /** Автоподстройка нагрузки: сами снижаем масштаб, если кадры не успевают. */
+    private volatile boolean autoQuality = true;
+    private volatile float autoScale = 1f;
+    private float latencyMs;
+    private int latencySamples;
     private volatile boolean frameGen;
     private int frameCounter;
 
@@ -432,6 +451,9 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         cfgFlowStep = Math.max(2, s.flowStep);
         cfgFlowSearch = Math.max(1, s.flowSearch);
         cfgFlowTaps = Math.max(1f, Math.min(2f, s.flowTaps));
+        autoQuality = s.autoQuality;
+        if (!s.autoQuality) autoScale = 1f;
+        split = s.splitCompare ? 0.5f : 0f;
         frameGen = s.frameGen;
     }
 
@@ -525,6 +547,25 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public void setOutputEnabled(boolean enabled) {
         outputEnabled = enabled;
         if (view != null) view.requestRender();
+    }
+
+    public boolean isSplitOn() {
+        return split > 0.01f;
+    }
+
+    public void setSplit(float value) {
+        split = Math.max(0f, Math.min(1f, value));
+        if (view != null) view.requestRender();
+    }
+
+    public void setAutoQuality(boolean value) {
+        autoQuality = value;
+        if (!value) autoScale = 1f;
+    }
+
+    /** Текущий фактический масштаб сцены (с учётом автоподстройки). */
+    public float getEffectiveScale() {
+        return clamp(cfgScale * autoScale, 0.3f, 1f);
     }
 
     public void setBypass(boolean value) {
@@ -721,6 +762,16 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
             hasPrevFrame = true;
             frameCounter++;
+        }
+
+        if (newFrame) {
+            // Столько времени кадр шёл от захвата до экрана — это и есть та
+            // задержка, из-за которой кажется, что «кнопки не нажимаются».
+            long ageMs = (now - lastCaptureNanos) / 1_000_000L;
+            if (ageMs >= 0 && ageMs < 1000) {
+                latencyMs = latencyMs * 0.8f + ageMs * 0.2f;
+                latencySamples++;
+            }
         }
 
         if (bypass) {
@@ -989,11 +1040,15 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         bindTex(0, curTex);
         bindTex(1, prevTex);
         bindTex(2, frameGen && flowTex != 0 ? flowUpTex : neutralTex);
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE3);
+        GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture);
         uniform1i(displayProgram, "tCurrent", 0);
         uniform1i(displayProgram, "tPrevious", 1);
         uniform1i(displayProgram, "tVelocity", 2);
+        uniform1i(displayProgram, "tRawOes", 3);
         uniform1f(displayProgram, "uPhase", p);
         uniform1f(displayProgram, "uVelRange", VEL_RANGE);
+        uniform1f(displayProgram, "uSplit", split);
         draw();
     }
 
@@ -1001,7 +1056,7 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     private void allocateTargets() {
         if (fullW <= 1) return;
-        float scale = clamp(cfgScale, 0.3f, 1f);
+        float scale = getEffectiveScale();
         boolean newDirect = scale >= 0.995f && !cfgFrameGen;
         int newLowW;
         int newLowH;
@@ -1234,9 +1289,39 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         captureFrames = 0;
         presentFrames = 0;
         statsWindowStart = now;
+
+        // Автоподстройка: если не успеваем — снижаем масштаб сцены, когда есть
+        // запас — возвращаем. Без этого на слабом GPU оверлей тормозит так,
+        // что кажется сломанным.
+        if (autoQuality && !bypass) {
+            float before = autoScale;
+            if (presentFps < 22f && autoScale > 0.55f) {
+                autoScale = Math.max(0.55f, autoScale - 0.12f);
+            } else if (presentFps > 48f && autoScale < 1f) {
+                autoScale = Math.min(1f, autoScale + 0.05f);
+            }
+            if (Math.abs(before - autoScale) > 0.005f && view != null) {
+                FxLog.i("Авто-качество: масштаб сцены " + Math.round(autoScale * 100) + "%"
+                        + " (было " + Math.round(presentFps) + " fps)");
+                view.queueEvent(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            allocateTargets();
+                        } catch (Throwable t) {
+                            targetsReady = false;
+                        }
+                    }
+                });
+            }
+        }
+
         if (statsListener != null) {
             statsListener.onStats(captureFps, presentFps,
-                    directMode ? fullW : lowW, directMode ? fullH : lowH, fullW, fullH);
+                    Math.round(fullW * getEffectiveScale()),
+                    Math.round(fullH * getEffectiveScale()),
+                    fullW, fullH,
+                    latencySamples > 0 ? latencyMs : -1f);
         }
     }
 

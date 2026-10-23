@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 // Пинуем коммит, а не @main: jsDelivr кэширует @main до 7 дней и отдавал бы старую версию.
 const CDN_LINK =
-  'https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.4/integrations/android/BazarFX.apk';
+  'https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.5/integrations/android/BazarFX.apk';
 const GITHUB_MIRROR =
   'https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk';
 
@@ -64,7 +64,7 @@ export default function InstallPage() {
         <div className="rounded-3xl border border-emerald-900/50 bg-gradient-to-b from-emerald-950/40 to-zinc-950 p-5 sm:p-8">
           <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-800/60 bg-emerald-950/60 px-3 py-1 text-[11px] text-emerald-300">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            версия 1.4 · Android 8+ · без root
+            версия 1.5 · Android 8+ · без root
           </div>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Скачать <span className="text-emerald-400">BazarFX.apk</span>
@@ -76,7 +76,7 @@ export default function InstallPage() {
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <a
-              href="/download/BazarFX.apk?v=1.4"
+              href="/download/BazarFX.apk?v=1.5"
               download="BazarFX.apk"
               className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 py-4 text-base font-semibold text-white transition-colors hover:bg-emerald-700"
             >
@@ -98,7 +98,7 @@ export default function InstallPage() {
                 <br />
                 • <a href="/BazarFX.apk" className="break-all text-emerald-400 underline decoration-emerald-800">/BazarFX.apk</a> — с этого сайта
                 <br />
-                • <a href={CDN_LINK} className="break-all text-zinc-300 underline decoration-zinc-700">cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.4/integrations/android/BazarFX.apk</a> — CDN, качается без зависаний
+                • <a href={CDN_LINK} className="break-all text-zinc-300 underline decoration-zinc-700">cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.5/integrations/android/BazarFX.apk</a> — CDN, качается без зависаний
                 <br />
                 • <a href={GITHUB_MIRROR} className="break-all text-zinc-400 underline decoration-zinc-700">github.com/.../raw/main/integrations/android/BazarFX.apk</a> — GitHub
               </div>
@@ -196,6 +196,8 @@ export default function InstallPage() {
               <li>• Сбой при запуске тяжёлой игры — исправлено в 1.1 (повторный захват экрана после поворота). Ставь 1.1.</li>
               <li>• Не ставится → разреши установку из этого источника в настройках.</li>
               <li>• Лагает → выбери пресет «Экономия» (или уменьши «Разрешение сцены») и выключи генерацию кадров.</li>
+              <li>• «Не вижу улучшений» → включи «Сравнение до/после» (в приложении или в меню кружка): слева оригинал, справа обработка, граница зелёная.</li>
+              <li>• Тормозит → в 1.5 появилось авто-качество: масштаб сцены подстраивается сам. Задержку видно в уведомлении.</li>
               <li>• Картинка была перевёрнута / «кнопки не нажимаются» → исправлено в 1.4: кадр MediaProjection приходит вверх ногами, не хватало переворота по вертикали.</li>
               <li>• Ошибка, но в логе доходит до «Шаг 4/4» → исправлено в 1.3.1: рендерер пытался создать GL-буферы до готовности контекста и навсегда помечал себя сломанным.</li>
               <li>• «Не удалось начать захват» → исправлено в 1.3: сервис брал размер экрана через Context.getDisplay(), который у сервиса всегда падает. Ставь 1.3.</li>
