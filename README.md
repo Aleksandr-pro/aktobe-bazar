@@ -23,7 +23,12 @@
 `integrations/android/` (готовый APK + исходники: фоновый режим поверх любых игр),
 описание — [docs/BAZARFX.md](docs/BAZARFX.md).
 
-**APK:** `integrations/android/BazarFX.apk` (69 КБ, Android 8+, без root) — или
-кнопка «Скачать APK» на странице `/fx`.
+**APK:** `integrations/android/BazarFX.apk` (69 КБ, Android 8+, без root).
+
+Прямые ссылки на скачивание:
+
+* страница установки с QR-кодом — `/install`
+* файл с сайта — `/BazarFX.apk`
+* зеркало на GitHub — https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk
 
 **Проверки:** `npm run check:types`, `npm run check:shaders`, `npm run check:engine`, `npm run check:apk`.

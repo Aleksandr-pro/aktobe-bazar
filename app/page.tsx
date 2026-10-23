@@ -20,6 +20,7 @@ export default function Home() {
             <a href="#" className="hover:text-white transition-colors">Объявления</a>
             <a href="#" className="hover:text-white transition-colors">Категории</a>
             <a href="#" className="hover:text-white transition-colors">Как это работает</a>
+            <a href="/install" className="hover:text-white transition-colors">APK</a>
             <a href="/fx" className="text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               BazarFX

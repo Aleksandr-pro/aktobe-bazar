@@ -186,8 +186,13 @@ fx.setVideo(null);           // назад к процедурной сцене
 
 ## 4.6. APK: «включил и работает поверх игр»
 
-Готовый APK лежит в `integrations/android/BazarFX.apk` (и на сайте — кнопка
-«Скачать APK» на `/fx`): `kz.bazar.fx`, Android 8+, 69 КБ, собран без Gradle
+Готовый APK лежит в `integrations/android/BazarFX.apk`. Скачать:
+
+* **`/install`** — страница установки (инструкция + QR-код на прямую ссылку)
+* **`/BazarFX.apk`** — прямая ссылка на файл с сайта
+* зеркало: `https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk`
+
+Кстати: `kz.bazar.fx`, Android 8+, 69 КБ, собран без Gradle
 (aapt2 + ecj + d8 + apksigner), подписан v2/v3.
 
 Что делает: foreground-service снимает экран через `MediaProjection`,
