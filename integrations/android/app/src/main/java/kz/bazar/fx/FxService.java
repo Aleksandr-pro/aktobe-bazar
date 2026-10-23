@@ -25,6 +25,7 @@ import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 /**
@@ -40,8 +41,15 @@ public class FxService extends Service implements FxRenderer.StatsListener {
 
     public static final String ACTION_START = "kz.bazar.fx.START";
     public static final String ACTION_STOP = "kz.bazar.fx.STOP";
+    /** Перечитать настройки и применить на ходу (пресет качества, шарп и т.д.). */
+    public static final String ACTION_RELOAD = "kz.bazar.fx.RELOAD";
+    /** Следующий пресет качества (кнопка в уведомлении). */
+    public static final String ACTION_CYCLE_QUALITY = "kz.bazar.fx.CYCLE_QUALITY";
     public static final String EXTRA_CODE = "code";
     public static final String EXTRA_DATA = "data";
+
+    /** Работает ли сервис прямо сейчас (чтобы лишний раз его не стартовать). */
+    public static volatile boolean isRunning;
 
     private static final String CHANNEL_ID = "bazarfx";
     private static final int NOTIFICATION_ID = 42;
@@ -60,9 +68,12 @@ public class FxService extends Service implements FxRenderer.StatsListener {
 
     private FxRenderer renderer;
     private FxSettings settings;
+    private LinearLayout qualityPanel;
+    private WindowManager.LayoutParams qualityParams;
     private Handler handler;
     private NotificationManager notificationManager;
     private String lastStats = "";
+    private long lastNotificationUpdate;
     private boolean running;
 
     @Override
@@ -89,9 +100,26 @@ public class FxService extends Service implements FxRenderer.StatsListener {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) return START_NOT_STICKY;
 
-        if (ACTION_STOP.equals(intent.getAction())) {
+        String action = intent.getAction();
+        if (ACTION_STOP.equals(action)) {
             stopSelf();
             return START_NOT_STICKY;
+        }
+        if (ACTION_RELOAD.equals(action)) {
+            if (!running) { // сервис не работает — просто применим настройки при следующем старте
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            reloadSettings(false);
+            return START_STICKY;
+        }
+        if (ACTION_CYCLE_QUALITY.equals(action)) {
+            if (!running) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            cycleQuality(1);
+            return START_STICKY;
         }
 
         try {
@@ -112,7 +140,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         if (!running) {
             startPipeline(code, data);
         }
-        return START_STICKY;
+        return START_NOT_STICKY;
     }
 
     private void startPipeline(int resultCode, Intent data) {
@@ -152,6 +180,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
 
         showOverlay();
         running = true;
+        isRunning = true;
 
         // Ждём, пока GL-поток создаст SurfaceTexture, и только потом создаём VirtualDisplay.
         waitForSurfaceTexture();
@@ -309,7 +338,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         bubble.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
-                stopSelf();
+                showQualityPanel();
                 return true;
             }
         });
@@ -320,12 +349,151 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         }
     }
 
+    private void showQualityPanel() {
+        hideQualityPanel();
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(0xF2121216);
+        int pad = (int) (12 * getResources().getDisplayMetrics().density);
+        panel.setPadding(pad, pad, pad, pad);
+
+        TextView title = new TextView(this);
+        title.setText("Качество BazarFX");
+        title.setTextColor(0xFF34D399);
+        title.setTextSize(13f);
+        title.setPadding(0, 0, 0, pad / 2);
+        panel.addView(title);
+
+        for (int i = 0; i < 5; i++) {
+            final int preset = i;
+            TextView item = new TextView(this);
+            boolean active = settings.quality == preset;
+            item.setText((active ? "● " : "○ ") + FxSettings.QUALITY_NAMES[preset]
+                    + " — " + FxSettings.QUALITY_HINTS[preset]);
+            item.setTextColor(active ? 0xFF34D399 : 0xFFE4E4E7);
+            item.setTextSize(12f);
+            item.setPadding(0, pad / 2, 0, pad / 2);
+            item.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    setQuality(preset);
+                    hideQualityPanel();
+                }
+            });
+            panel.addView(item);
+        }
+
+        TextView off = new TextView(this);
+        off.setText("Скрыть панель");
+        off.setTextColor(0xFF71717A);
+        off.setTextSize(12f);
+        off.setPadding(0, pad / 2, 0, 0);
+        off.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideQualityPanel();
+            }
+        });
+        panel.addView(off);
+
+        DisplayMetrics metrics = currentMetrics();
+        int width = Math.min((int) (metrics.widthPixels * 0.86f), (int) (360 * metrics.density));
+        qualityParams = new WindowManager.LayoutParams(
+                width,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT);
+        qualityParams.gravity = Gravity.CENTER;
+        try {
+            windowManager.addView(panel, qualityParams);
+            qualityPanel = panel;
+            // автоскрытие, чтобы панель не мешала играть
+            handler.postDelayed(hideQualityRunnable, 12000);
+        } catch (Throwable t) {
+            FxLog.w("Панель качества: " + t);
+        }
+    }
+
+    private final Runnable hideQualityRunnable = new Runnable() {
+        @Override
+        public void run() {
+            hideQualityPanel();
+        }
+    };
+
+    private void hideQualityPanel() {
+        handler.removeCallbacks(hideQualityRunnable);
+        if (qualityPanel != null) {
+            try {
+                windowManager.removeView(qualityPanel);
+            } catch (Exception ignored) {
+            }
+            qualityPanel = null;
+        }
+    }
+
     private void safeUpdateBubble() {
         try {
             if (bubble != null && bubble.isAttachedToWindow()) {
                 windowManager.updateViewLayout(bubble, bubbleParams);
             }
         } catch (Exception ignored) {
+        }
+    }
+
+    /** Перечитывает настройки из SharedPreferences и применяет к живому пайплайну. */
+    private void reloadSettings(boolean save) {
+        try {
+            FxSettings fresh = FxSettings.load(this);
+            boolean bubbleChanged = fresh.showBubble != settings.showBubble;
+            boolean secureChanged = fresh.secureOverlay != settings.secureOverlay;
+            if (save) fresh.save(this);
+            settings = fresh;
+            if (renderer != null) {
+                renderer.updateSettings(settings);
+            }
+            if (secureChanged && glView != null) {
+                FxLog.w("Смена режима захвата оверлея вступит в силу после перезапуска");
+            }
+            if (bubbleChanged) {
+                if (settings.showBubble) {
+                    if (bubble == null) showBubble(currentMetrics());
+                } else if (bubble != null) {
+                    try {
+                        windowManager.removeView(bubble);
+                    } catch (Exception ignored) {
+                    }
+                    bubble = null;
+                }
+            }
+            updateBubbleText();
+            updateNotification(lastStats.isEmpty() ? qualityLine() : qualityLine() + "\n" + lastStats);
+        } catch (Throwable t) {
+            FxLog.e("reloadSettings: " + t, t);
+        }
+    }
+
+    private String qualityLine() {
+        return "Качество: " + settings.qualityName();
+    }
+
+    /** Переключение пресета на ходу (кнопка в уведомлении и меню на кружке). */
+    private void cycleQuality(int direction) {
+        int n = 5; // только 5 основных пресетов, CUSTOM сюда не попадает
+        int next = (settings.quality + direction) % n;
+        if (next < 0) next += n;
+        setQuality(next);
+    }
+
+    private void setQuality(int preset) {
+        settings.applyPreset(preset);
+        settings.save(this);
+        reloadSettings(false);
+        try {
+            android.widget.Toast.makeText(getApplicationContext(),
+                    "Качество: " + settings.qualityName(), android.widget.Toast.LENGTH_SHORT).show();
+        } catch (Throwable ignored) {
         }
     }
 
@@ -463,7 +631,11 @@ public class FxService extends Service implements FxRenderer.StatsListener {
     @Override
     public void onStats(float captureFps, float presentFps, int lowW, int lowH, int fullW, int fullH) {
         lastStats = String.format("%.0f→%.0f fps · %d×%d→%d×%d", captureFps, presentFps, lowW, lowH, fullW, fullH);
-        updateNotification(lastStats);
+        long now = System.currentTimeMillis();
+        if (now - lastNotificationUpdate > 4000) { // раз в 4 с достаточно, реже дёргаем систему
+            lastNotificationUpdate = now;
+            updateNotification(qualityLine() + " · " + lastStats);
+        }
         if (bubble != null) {
             handler.post(new Runnable() {
                 @Override
@@ -563,20 +735,29 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
 
+        Intent qualityIntent = new Intent(this, FxService.class).setAction(ACTION_CYCLE_QUALITY);
+        PendingIntent qualityPending = PendingIntent.getService(
+                this, 4, qualityIntent,
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                        ? PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
+                        : PendingIntent.FLAG_UPDATE_CURRENT);
+
         return builder
                 .setContentTitle(title)
                 .setContentText(text)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setOngoing(true)
                 .setContentIntent(openPending)
-                .addAction(new Notification.Action.Builder(
-                        null, "Остановить", stopPending).build())
+                .addAction(new Notification.Action.Builder(null, "Качество", qualityPending).build())
+                .addAction(new Notification.Action.Builder(null, "Стоп", stopPending).build())
                 .build();
     }
 
     @Override
     public void onDestroy() {
         running = false;
+        isRunning = false;
         handler.removeCallbacksAndMessages(null);
 
         releaseVirtualDisplay();
@@ -589,13 +770,21 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             projection = null;
         }
 
-        if (renderer != null) {
-            renderer.release();
-        }
+        hideQualityPanel();
 
+        // Сначала останавливаем GL-поток, и только потом освобождаем SurfaceTexture,
+        // иначе release() может произойти во время отрисовки кадра.
         if (glView != null) {
             try {
                 glView.onPause();
+            } catch (Throwable ignored) {
+            }
+        }
+        if (renderer != null) {
+            renderer.release();
+        }
+        if (glView != null) {
+            try {
                 windowManager.removeView(glView);
             } catch (Exception ignored) {
             }
