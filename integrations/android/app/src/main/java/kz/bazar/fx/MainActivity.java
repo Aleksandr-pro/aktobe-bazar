@@ -162,6 +162,18 @@ public class MainActivity extends Activity {
                     }
                 }));
 
+        root.addView(checkbox("Исключать оверлей из захвата",
+                "Обязательно для нормальной работы: иначе приложение снимает само себя. "
+                        + "Если на вашем устройстве экран становится чёрным — выключите.",
+                settings.secureOverlay,
+                new OnChecked() {
+                    @Override
+                    public void onChecked(boolean checked) {
+                        settings.secureOverlay = checked;
+                        settings.save(MainActivity.this);
+                    }
+                }));
+
         root.addView(sectionHeader("Честно о возможностях"));
 
         TextView honest = new TextView(this);

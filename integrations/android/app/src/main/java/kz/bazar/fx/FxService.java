@@ -179,14 +179,23 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                     : GLSurfaceView.RENDERMODE_WHEN_DIRTY);
         }
 
+        int overlayFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
+
+        // Без FLAG_SECURE MediaProjection снимет наш же оверлей — получится
+        // «зеркальный коридор». С флагом система исключает этот слой из захвата,
+        // и в кадр попадает игра под ним.
+        if (settings.secureOverlay) {
+            overlayFlags |= WindowManager.LayoutParams.FLAG_SECURE;
+        }
+
         overlayParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                overlayFlags,
                 PixelFormat.OPAQUE);
         overlayParams.gravity = Gravity.TOP | Gravity.START;
         overlayParams.x = 0;
