@@ -16,10 +16,11 @@ public final class FxSettings {
     public static final int QUALITY_HIGH = 2;
     public static final int QUALITY_ULTRA = 3;
     public static final int QUALITY_REALISM = 4;
-    public static final int CUSTOM = 5;
+    public static final int QUALITY_NEURAL = 5;
+    public static final int CUSTOM = 6;
 
     public static final String[] QUALITY_NAMES = {
-            "Экономия", "Баланс", "Высокое", "Ультра", "Реализм", "Свои настройки"
+            "Экономия", "Баланс", "Высокое", "Ультра", "Реализм", "AI · нейро", "Свои настройки"
     };
 
     public static final String[] QUALITY_HINTS = {
@@ -27,7 +28,8 @@ public final class FxSettings {
             "0.7× сцены — компромисс по умолчанию",
             "0.85× + TAA — резче и чище, чем исходник",
             "1.0× + TAA + clarity — предел качества апскейла",
-            "1.0× + TAA + clarity + тон — «кино»-картинка без лесенок и полос"
+            "1.0× + TAA + clarity + тон — «кино»-картинка без лесенок и полос",
+            "нейросеть восстанавливает детали из низкого разрешения (медленнее)"
     };
 
     public int quality = QUALITY_HIGH;
@@ -42,6 +44,9 @@ public final class FxSettings {
     public boolean secureOverlay = true;
     public boolean autoQuality = true;   // сам снижает масштаб, если не успевает
     public boolean splitCompare = false; // слева оригинал, справа обработка
+    public boolean neural = false;        // нейросетевой апскейл
+    public float neuralStrength = 1f;     // 0..1 — доля «AI» в результате
+    public float neuralScale = 0.36f;     // низкое разрешение на входе сети
     public int flowStep = 3;           // шаг сетки блочного потока (для frameGen)
     public int flowSearch = 4;         // радиус поиска в шагах сетки
     public float flowTaps = 1f;        // окно сопоставления: 1 = 3x3, 2 = 5x5
@@ -65,6 +70,7 @@ public final class FxSettings {
                 grade = 0f;
                 temporal = false;
                 frameGen = false;
+                neural = false;
                 flowStep = 4;
                 flowSearch = 3;
                 flowTaps = 1f;
@@ -76,6 +82,7 @@ public final class FxSettings {
                 grade = 0f;
                 temporal = false;
                 frameGen = false;
+                neural = false;
                 flowStep = 3;
                 flowSearch = 4;
                 flowTaps = 1f;
@@ -87,6 +94,7 @@ public final class FxSettings {
                 grade = 0.25f;
                 temporal = true;
                 frameGen = false;
+                neural = false;
                 flowStep = 3;
                 flowSearch = 4;
                 flowTaps = 1f;
@@ -98,6 +106,7 @@ public final class FxSettings {
                 grade = 0.4f;
                 temporal = true;
                 frameGen = false;
+                neural = false;
                 flowStep = 2;
                 flowSearch = 5;
                 flowTaps = 2f;
@@ -109,9 +118,23 @@ public final class FxSettings {
                 grade = 0.5f;
                 temporal = true;
                 frameGen = false;
+                neural = false;
                 flowStep = 2;
                 flowSearch = 5;
                 flowTaps = 2f;
+                break;
+            case QUALITY_NEURAL:
+                // Сеть сама восстанавливает детали, поэтому агрессивный шарп не нужен:
+                // иначе к «нарисованным» краям добавляются ореолы.
+                renderScale = 0.5f;
+                sharpen = 0.35f;
+                clarity = 0.15f;
+                grade = 0.15f;
+                temporal = true;
+                frameGen = false;
+                neural = true;
+                neuralStrength = 1f;
+                neuralScale = 0.36f;
                 break;
             default:
                 quality = CUSTOM;
@@ -142,6 +165,9 @@ public final class FxSettings {
         s.secureOverlay = p.getBoolean("secureOverlay", s.secureOverlay);
         s.autoQuality = p.getBoolean("autoQuality", s.autoQuality);
         s.splitCompare = p.getBoolean("splitCompare", s.splitCompare);
+        s.neural = p.getBoolean("neural", s.neural);
+        s.neuralStrength = p.getFloat("neuralStrength", s.neuralStrength);
+        s.neuralScale = p.getFloat("neuralScale", s.neuralScale);
         s.flowStep = p.getInt("flowStep", s.flowStep);
         s.flowSearch = p.getInt("flowSearch", s.flowSearch);
         s.flowTaps = p.getFloat("flowTaps", s.flowTaps);
@@ -162,6 +188,9 @@ public final class FxSettings {
                 .putBoolean("secureOverlay", secureOverlay)
                 .putBoolean("autoQuality", autoQuality)
                 .putBoolean("splitCompare", splitCompare)
+                .putBoolean("neural", neural)
+                .putFloat("neuralStrength", neuralStrength)
+                .putFloat("neuralScale", neuralScale)
                 .putInt("flowStep", flowStep)
                 .putInt("flowSearch", flowSearch)
                 .putFloat("flowTaps", flowTaps)

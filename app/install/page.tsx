@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 // Пинуем коммит, а не @main: jsDelivr кэширует @main до 7 дней и отдавал бы старую версию.
 const CDN_LINK =
-  'https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.5/integrations/android/BazarFX.apk';
+  'https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.6/integrations/android/BazarFX.apk';
 const GITHUB_MIRROR =
   'https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk';
 
@@ -64,7 +64,7 @@ export default function InstallPage() {
         <div className="rounded-3xl border border-emerald-900/50 bg-gradient-to-b from-emerald-950/40 to-zinc-950 p-5 sm:p-8">
           <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-800/60 bg-emerald-950/60 px-3 py-1 text-[11px] text-emerald-300">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            версия 1.5 · Android 8+ · без root
+            версия 1.6 · Android 8+ · без root
           </div>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Скачать <span className="text-emerald-400">BazarFX.apk</span>
@@ -76,7 +76,7 @@ export default function InstallPage() {
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <a
-              href="/download/BazarFX.apk?v=1.5"
+              href="/download/BazarFX.apk?v=1.6"
               download="BazarFX.apk"
               className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 py-4 text-base font-semibold text-white transition-colors hover:bg-emerald-700"
             >
@@ -98,7 +98,7 @@ export default function InstallPage() {
                 <br />
                 • <a href="/BazarFX.apk" className="break-all text-emerald-400 underline decoration-emerald-800">/BazarFX.apk</a> — с этого сайта
                 <br />
-                • <a href={CDN_LINK} className="break-all text-zinc-300 underline decoration-zinc-700">cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.5/integrations/android/BazarFX.apk</a> — CDN, качается без зависаний
+                • <a href={CDN_LINK} className="break-all text-zinc-300 underline decoration-zinc-700">cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.6/integrations/android/BazarFX.apk</a> — CDN, качается без зависаний
                 <br />
                 • <a href={GITHUB_MIRROR} className="break-all text-zinc-400 underline decoration-zinc-700">github.com/.../raw/main/integrations/android/BazarFX.apk</a> — GitHub
               </div>
@@ -136,6 +136,30 @@ export default function InstallPage() {
         </section>
 
         <section className="mt-8 rounded-2xl border border-emerald-900/40 bg-emerald-950/20 p-5">
+          <h2 className="text-sm font-semibold text-emerald-300">Нейросетевой апскейл (как DLSS, только честный)</h2>
+          <p className="mt-2 text-xs leading-relaxed text-zinc-300">
+            В 1.6 появился режим <b>AI · нейро</b>: на телефоне, на GPU, в реальном времени
+            прогоняется настоящая свёрточная сеть. Она восстанавливает детали из кадра низкого
+            разрешения — так же, как это делают DLSS/XeSS, только без их обучающих датасетов и без
+            доступа к движку.
+          </p>
+          <ul className="mt-3 space-y-1 text-xs leading-relaxed text-zinc-400">
+            <li>• Архитектура: conv 3→8 (3×3, ReLU) → conv 8→12 (3×3) → pixelshuffle ×2.</li>
+            <li>• 1100 весов, обучены офлайн скриптом <span className="font-mono text-zinc-300">scripts/train_sr.py</span> и упакованы в текстуру.</li>
+            <li>• На валидации сеть даёт ~30 дБ PSNR против ~28 дБ у билинейного апскейла — то есть реально, а не «на глаз».</li>
+            <li>• Сила эффекта регулируется ползунком: 0% — обычная математика, 100% — чистый выход сети.</li>
+            <li>• Требует GPU побыстрее: на слабом устройстве включи «Авто-качество».</li>
+          </ul>
+          <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+            Честно: это не DLSS 5. Настоящий DLSS восстанавливает кадр из буферов движка (глубина,
+            векторы движения, G-буферы) — снаружи, через захват экрана, этих данных нет. Мы делаем
+            то же самое, что может позволить себе внешнее приложение: нейросетевой апскейл по
+            картинке. И у нас он не «включается» магически: разница между 30 и 28 дБ — это реальные
+            детали на краях и текстурах, а не выдуманный резерв.
+          </p>
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
           <h2 className="text-sm font-semibold text-emerald-300">Пять уровней качества — до «реализм»</h2>
           <p className="mt-2 text-xs leading-relaxed text-zinc-300">
             Меняются на ходу: в приложении, кнопкой «Качество» в уведомлении или удержанием кружка{' '}
