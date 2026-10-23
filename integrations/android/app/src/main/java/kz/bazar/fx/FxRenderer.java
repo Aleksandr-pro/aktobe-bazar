@@ -58,7 +58,14 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             + "in vec2 vUV;\n"
             + "out vec4 fragColor;\n"
             + "uniform samplerExternalOES tOes;\n"
-            + "void main() { fragColor = vec4(texture(tOes, vUV).rgb, 1.0); }\n";
+            + "void main() {\n"
+            // Кадр из MediaProjection лежит в текстуре строками сверху вниз, а
+            // GL читает текстуру снизу вверх — без этого переворота картинка
+            // выводится вверх ногами (и «не работают кнопки», потому что всё
+            // нажатия попадают не туда, где они нарисованы).
+            + "  vec2 uv = vec2(vUV.x, 1.0 - vUV.y);\n"
+            + "  fragColor = vec4(texture(tOes, uv).rgb, 1.0);\n"
+            + "}\n";
 
     /** Простое копирование текстуры (для истории/предыдущего кадра). */
     private static final String FRAG_COPY = ""
@@ -381,6 +388,8 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private double captureIntervalSec = 1 / 60.0;
     private boolean frameAvailable;
     private volatile boolean bypass;
+    /** false — вывод на экран выключен (пользователь скрыл оверлей, чтобы играть/делать скриншоты). */
+    private volatile boolean outputEnabled = true;
     private volatile boolean frameGen;
     private int frameCounter;
 
@@ -510,6 +519,12 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             targetsReady = false;
             FxLog.e("Не удалось выделить буферы " + width + "x" + height + ": " + t, t);
         }
+    }
+
+    /** Включает/выключает вывод. При выключении GL-поток не тратит GPU на кадры. */
+    public void setOutputEnabled(boolean enabled) {
+        outputEnabled = enabled;
+        if (view != null) view.requestRender();
     }
 
     public void setBypass(boolean value) {
@@ -644,6 +659,12 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     @Override
     public void onDrawFrame(GL10 gl) {
         if (failed || surfaceTextureId == -1 || fullW <= 1) return;
+        if (!outputEnabled) {
+            // Оверлей скрыт: кадры из VirtualDisplay продолжают поступать, но мы
+            // их не обрабатываем — экономия батареи и нулевая нагрузка на GPU.
+            frameAvailable = false;
+            return;
+        }
         if (!targetsReady) {
             // Повторяем выделение буферов, пока не получится (например, игра
             // временно заняла всю видеопамять).
@@ -780,7 +801,7 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     @Override
     public void onFrameAvailable(SurfaceTexture st) {
         frameAvailable = true;
-        if (view != null) view.requestRender();
+        if (view != null && outputEnabled) view.requestRender();
     }
 
     // ------------------------------------------------------------- pipeline
