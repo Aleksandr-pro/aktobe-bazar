@@ -450,3 +450,141 @@ void main() {
   fragColor = vec4(col + dither, 1.0);
 }
 `;
+
+/* ------------------------------------------------------------------------- */
+/*  Video mode — используется, когда источником кадра является не движок,     */
+/*  а готовое видео (запись геймплея, эмулятор, стрим).                       */
+/*  Видео считается «кадром игры в низком разрешении» и сжимается в lowRes,   */
+/*  а дальше идёт обычный пайплайн BazarFX.                                   */
+/* ------------------------------------------------------------------------- */
+
+export const VIDEO_LOW_FRAG = `#version 300 es
+precision highp float;
+
+in vec2 vUV;
+out vec4 fragColor;
+
+uniform sampler2D tVideo;
+uniform vec2 uFitScale;   // cover-фит: масштаб и смещение внутри кадра видео
+uniform vec2 uFitOffset;
+uniform float uLowResDarken; // лёгкое затемнение, чтобы «низкое разрешение» читалось
+
+void main() {
+  vec2 uv = vUV * uFitScale + uFitOffset;
+  vec3 col = texture(tVideo, clamp(uv, vec2(0.0), vec2(1.0))).rgb;
+  fragColor = vec4(col * (1.0 - uLowResDarken), 1.0);
+}
+`;
+/**
+ * Оценка движения блоками (block matching) — работает без motion vectors движка,
+ * т.е. подходит для любого видео/стрима. Считается на сетке в 3 раза мельче
+ * lowRes: поиск ±5 шагов (≈ ±15 px lowRes), 3×3 отсчёта в блоке, затем
+ * субпиксельное уточнение параболой по SAD.
+ */
+export const FLOW_BLOCK_FRAG = `#version 300 es
+precision highp float;
+
+in vec2 vUV;
+out vec4 fragColor;
+
+uniform sampler2D tCur;
+uniform sampler2D tPrev;
+uniform vec2 uLowRes;
+uniform float uStep;      // шаг сетки в пикселях lowRes (2..4)
+uniform float uSearch;    // радиус поиска в шагах сетки (2..6)
+uniform float uTaps;      // полуразмер окна сопоставления: 1 = 3x3, 2 = 5x5
+uniform float uVelRange;
+
+const int MAX_SEARCH = 6;
+const int MAX_TAPS = 2;
+const float REG = 0.002;
+
+float lumaCur(vec2 uv) {
+  return dot(texture(tCur, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.299, 0.587, 0.114));
+}
+
+float lumaPrev(vec2 uv) {
+  return dot(texture(tPrev, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.299, 0.587, 0.114));
+}
+
+float sad(vec2 uv, vec2 texelStep, vec2 gridOffset) {
+  float acc = 0.0;
+  for (int y = -MAX_TAPS; y <= MAX_TAPS; y++) {
+    for (int x = -MAX_TAPS; x <= MAX_TAPS; x++) {
+      if (float(abs(x)) > uTaps || float(abs(y)) > uTaps) continue;
+      vec2 tap = vec2(float(x), float(y)) * texelStep;
+      vec2 a = uv + tap;
+      vec2 b = uv + tap + gridOffset;
+      acc += abs(lumaCur(a) - lumaPrev(b));
+    }
+  }
+  return acc;
+}
+
+void main() {
+  vec2 texel = 1.0 / uLowRes;
+  vec2 stepUV = texel * uStep;
+
+  float best = 1e9;
+  vec2 bestOff = vec2(0.0);
+
+  for (int dy = -MAX_SEARCH; dy <= MAX_SEARCH; dy++) {
+    for (int dx = -MAX_SEARCH; dx <= MAX_SEARCH; dx++) {
+      if (float(abs(dx)) > uSearch || float(abs(dy)) > uSearch) continue;
+      vec2 off = vec2(float(dx), float(dy));
+      float cost = sad(vUV, stepUV, off * uStep * texel) + REG * length(off);
+      if (cost < best) {
+        best = cost;
+        bestOff = off;
+      }
+    }
+  }
+
+  // параболическое субпиксельное уточнение
+  float c0 = sad(vUV, stepUV, bestOff * uStep * texel);
+  float sl = sad(vUV, stepUV, (bestOff + vec2(-1.0, 0.0)) * uStep * texel);
+  float sr = sad(vUV, stepUV, (bestOff + vec2(1.0, 0.0)) * uStep * texel);
+  float su = sad(vUV, stepUV, (bestOff + vec2(0.0, -1.0)) * uStep * texel);
+  float sd = sad(vUV, stepUV, (bestOff + vec2(0.0, 1.0)) * uStep * texel);
+
+  float denX = 2.0 * (sr - 2.0 * c0 + sl);
+  float denY = 2.0 * (sd - 2.0 * c0 + su);
+  float subX = abs(denX) > 1e-6 ? clamp((sl - sr) / denX, -1.0, 1.0) : 0.0;
+  float subY = abs(denY) > 1e-6 ? clamp((su - sd) / denY, -1.0, 1.0) : 0.0;
+
+  // знак: смещение окна поиска противоположно движению пикселя
+  vec2 dispPx = -(bestOff + vec2(subX, subY)) * uStep;
+  vec2 vel = dispPx * texel;
+  float mag = length(vel);
+  if (mag > uVelRange) vel *= uVelRange / max(mag, 1e-5);
+
+  fragColor = vec4(clamp(vel / uVelRange * 0.5 + 0.5, 0.0, 1.0), 0.0, 1.0);
+}
+`;
+
+/** Апскейл блочного потока до lowRes + сглаживание, чтобы не «дрожал» сдвиг. */
+export const FLOW_UPSCALE_FRAG = `#version 300 es
+precision highp float;
+
+in vec2 vUV;
+out vec4 fragColor;
+
+uniform sampler2D tFlow;
+uniform vec2 uLowRes;
+
+void main() {
+  vec2 texel = 1.0 / uLowRes;
+  vec2 acc = vec2(0.0);
+  float wsum = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      float w = (x == 0 && y == 0) ? 1.0 : 0.5;
+      vec2 s = texture(tFlow, vUV + vec2(float(x), float(y)) * texel * 1.5).rg * 2.0 - 1.0;
+      acc += s * w;
+      wsum += w;
+    }
+  }
+  vec2 vel = acc / wsum;
+  fragColor = vec4(clamp(vel * 0.5 + 0.5, 0.0, 1.0), 0.0, 1.0);
+}
+`;
