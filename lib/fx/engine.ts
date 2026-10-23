@@ -54,6 +54,21 @@ export const DEFAULT_OPTIONS: FxOptions = {
   paused: false,
 };
 
+export type BenchmarkResult = {
+  nativeMs: number;
+  fxMs: number;
+  nativeFps: number;
+  fxFps: number;
+  speedup: number;
+  renderScale: number;
+  lowW: number;
+  lowH: number;
+  fullW: number;
+  fullH: number;
+  temporal: boolean;
+  frameGen: boolean;
+};
+
 export type FxStats = {
   sceneFps: number;
   presentFps: number;
@@ -205,6 +220,10 @@ export class BazarFX {
 
   private videoTexture: WebGLTexture | null = null;
   private neutralVelocity: WebGLTexture | null = null;
+  private benchTarget: Target | null = null;
+  private benchVelocity: WebGLTexture | null = null;
+
+  benchmarking = false;
   private video: HTMLVideoElement | null = null;
   private lastVideoTime = -1;
   private videoFrameInterval = 0;
@@ -473,6 +492,8 @@ export class BazarFX {
     deleteTarget(gl, this.lowPrevTarget);
     deleteTarget(gl, this.flowTarget);
     deleteTarget(gl, this.flowBlurTarget);
+    deleteTarget(gl, this.benchTarget);
+    if (this.benchVelocity) gl.deleteTexture(this.benchVelocity);
     if (this.sceneFbo) gl.deleteFramebuffer(this.sceneFbo);
     if (this.sceneVelocity) gl.deleteTexture(this.sceneVelocity);
 
@@ -504,6 +525,19 @@ export class BazarFX {
     this.flowTarget = createTarget(gl, this.flowGridW, this.flowGridH);
     this.flowBlurTarget = createTarget(gl, this.lowW, this.lowH);
     this.lowPrevValid = false;
+
+    // Мишень для замера «как было бы без BazarFX» (полное разрешение + MRT).
+    const benchColor = createTexture(gl, this.fullW, this.fullH, gl.LINEAR, gl.CLAMP_TO_EDGE);
+    const benchVel = createTexture(gl, this.fullW, this.fullH, gl.LINEAR, gl.CLAMP_TO_EDGE);
+    const benchFbo = gl.createFramebuffer();
+    if (!benchFbo) throw new Error('Не удалось создать benchmark framebuffer');
+    gl.bindFramebuffer(gl.FRAMEBUFFER, benchFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, benchColor, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, benchVel, 0);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.benchTarget = { fbo: benchFbo, tex: benchColor, width: this.fullW, height: this.fullH };
+    this.benchVelocity = benchVel;
 
     this.upTarget = createTarget(gl, this.fullW, this.fullH);
     this.history = [createTarget(gl, this.fullW, this.fullH), createTarget(gl, this.fullW, this.fullH)];
@@ -557,6 +591,8 @@ export class BazarFX {
     deleteTarget(gl, this.lowPrevTarget);
     deleteTarget(gl, this.flowTarget);
     deleteTarget(gl, this.flowBlurTarget);
+    deleteTarget(gl, this.benchTarget);
+    if (this.benchVelocity) gl.deleteTexture(this.benchVelocity);
     if (this.videoTexture) gl.deleteTexture(this.videoTexture);
     if (this.neutralVelocity) gl.deleteTexture(this.neutralVelocity);
     if (this.sceneFbo) gl.deleteFramebuffer(this.sceneFbo);
@@ -580,6 +616,7 @@ export class BazarFX {
     if (!this.running) return;
     this.raf = requestAnimationFrame(this.tick);
     if (!this.sceneTarget) return;
+    if (this.benchmarking) return;
 
     if (this.options.paused) {
       if (!this.pausedAt) this.pausedAt = now;
@@ -737,8 +774,10 @@ export class BazarFX {
   private renderSceneFrame(now: number) {
     const gl = this.gl;
     const t0 = performance.now();
-    this.startQuery();
-    this.pollQuery();
+    if (!this.benchmarking) {
+      this.startQuery();
+      this.pollQuery();
+    }
 
     this.frameIndex++;
 
@@ -832,7 +871,7 @@ export class BazarFX {
     const cpuMs = performance.now() - t0;
     this.cpuAccum += cpuMs;
     this.cpuSamples++;
-    this.endQuery();
+    if (!this.benchmarking) this.endQuery();
   }
 
   private lowTexture(): WebGLTexture {
@@ -975,6 +1014,88 @@ export class BazarFX {
     gl.uniform1i(this.copyProgram.uniforms.get('tSrc') ?? null, 0);
     this.drawQuad();
     this.lowPrevValid = true;
+  }
+
+  /**
+   * Честный замер на этом устройстве: сколько миллисекунд занимает кадр
+   * 1) «как обычно» — сцена в полном разрешении, без BazarFX;
+   * 2) «с BazarFX» — сцена в низком разрешении + весь пайплайн + вывод.
+   * Оба варианта рисуются в offscreen-мишени и завершаются gl.finish(),
+   * поэтому цифры отражают работу GPU, а не задержки vsync.
+   */
+  async benchmark(iterations = 20): Promise<BenchmarkResult> {
+    const gl = this.gl;
+    if (!this.sceneTarget || !this.benchTarget) throw new Error('Движок ещё не готов');
+
+    // Замер имеет смысл только на процедурной сцене: у видео «нативной» версии нет.
+    const previousSource = this.options.source;
+    if (previousSource !== 'game') {
+      this.options = { ...this.options, source: 'game' };
+    }
+
+    const wasPaused = this.options.paused;
+    this.benchmarking = true;
+    this.options = { ...this.options, paused: true }; // останавливаем обычный цикл
+
+    const measure = (draw: () => void, warmup: number) => {
+      for (let i = 0; i < warmup; i++) {
+        draw();
+        gl.finish();
+      }
+      const start = performance.now();
+      for (let i = 0; i < iterations; i++) {
+        draw();
+        gl.finish();
+      }
+      return (performance.now() - start) / iterations;
+    };
+
+    // A. сцена в полном разрешении, как обычная игра
+    const drawNative = () => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.benchTarget!.fbo);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+      gl.viewport(0, 0, this.fullW, this.fullH);
+      gl.useProgram(this.sceneProgram.program);
+      this.setUniforms(this.sceneProgram, {
+        uResolution: [this.fullW, this.fullH],
+        uJitter: [0, 0],
+        uCamZ: this.camZ,
+        uTime: (performance.now() - this.startTime) / 1000,
+        uCamMove: 0.15,
+      });
+      this.drawQuad();
+    };
+
+    // B. низкое разрешение + пайплайн
+    const drawFx = () => {
+      this.renderSceneFrame(performance.now());
+      this.present(0);
+    };
+
+    const nativeMs = measure(drawNative, 3);
+    const fxMs = measure(drawFx, 3);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.benchmarking = false;
+    this.options = { ...this.options, paused: wasPaused, source: previousSource };
+    this.historyValid = false;
+    this.hasPreviousFrame = false;
+    this.lastSceneTime = 0;
+
+    return {
+      nativeMs: Math.round(nativeMs * 100) / 100,
+      fxMs: Math.round(fxMs * 100) / 100,
+      nativeFps: Math.round(1000 / Math.max(nativeMs, 0.01)),
+      fxFps: Math.round(1000 / Math.max(fxMs, 0.01)),
+      speedup: Math.round((nativeMs / Math.max(fxMs, 0.01)) * 100) / 100,
+      renderScale: this.options.renderScale,
+      lowW: this.lowW,
+      lowH: this.lowH,
+      fullW: this.fullW,
+      fullH: this.fullH,
+      temporal: this.options.temporal,
+      frameGen: this.options.frameGen,
+    };
   }
 
   private present(phase: number) {

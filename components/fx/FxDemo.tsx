@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BazarFX, DEFAULT_OPTIONS, type FxOptions, type FxStats } from '@/lib/fx/engine';
+import { BazarFX, DEFAULT_OPTIONS, type BenchmarkResult, type FxOptions, type FxStats } from '@/lib/fx/engine';
 
 type Preset = {
   id: string;
@@ -106,6 +106,8 @@ export default function FxDemo() {
   const [canInstall, setCanInstall] = useState(false);
   const installEvent = useRef<any>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [bench, setBench] = useState<BenchmarkResult | null>(null);
+  const [benchRunning, setBenchRunning] = useState(false);
 
   const patch = useCallback((next: Partial<FxOptions>) => {
     setOptions((prev) => ({ ...prev, ...next }));
@@ -318,6 +320,23 @@ export default function FxDemo() {
     } else {
       video.pause();
       setVideoPlaying(false);
+    }
+  };
+
+  const runBenchmark = async () => {
+    const engine = engineRef.current;
+    if (!engine || benchRunning) return;
+    setBenchRunning(true);
+    setBench(null);
+    try {
+      // даём браузеру отрисовать состояние кнопки перед блокирующим замером
+      await new Promise((r) => setTimeout(r, 60));
+      const result = await engine.benchmark(16);
+      setBench(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBenchRunning(false);
     }
   };
 
@@ -561,6 +580,69 @@ export default function FxDemo() {
                   <Stat label="множитель fps" value={`${boost}×`} accent />
                   <Stat label="сгенерировано" value={stats ? `${stats.generatedShare}%` : '—'} />
                   <Stat label="CPU кадра" value={stats ? `${stats.cpuMs.toFixed(1)} мс` : '—'} />
+                </div>
+
+                <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={runBenchmark}
+                      disabled={benchRunning}
+                      className={`rounded-xl px-3 py-2 text-xs font-medium text-white transition-colors ${
+                        benchRunning ? 'bg-zinc-700' : 'bg-emerald-600 hover:bg-emerald-700'
+                      }`}
+                    >
+                      {benchRunning ? 'Замеряю…' : 'Замерить на этом устройстве'}
+                    </button>
+                    <span className="text-[11px] text-zinc-500">
+                      Честный замер GPU: кадр «как обычно» против кадра с BazarFX
+                    </span>
+                  </div>
+
+                  {bench && (
+                    <div className="mt-3 overflow-x-auto">
+                      <table className="w-full text-left text-[11px]">
+                        <thead className="text-zinc-500">
+                          <tr>
+                            <th className="py-1 font-normal">Вариант</th>
+                            <th className="py-1 font-normal">Кадр</th>
+                            <th className="py-1 font-normal">FPS (потолок)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="font-mono">
+                          <tr className="border-t border-zinc-800">
+                            <td className="py-1 pr-3 font-sans text-zinc-300">
+                              Сцена {bench.fullW}×{bench.fullH}
+                            </td>
+                            <td className="py-1 pr-3">{bench.nativeMs.toFixed(2)} мс</td>
+                            <td className="py-1">{bench.nativeFps}</td>
+                          </tr>
+                          <tr className="border-t border-zinc-800">
+                            <td className="py-1 pr-3 font-sans text-emerald-300">
+                              BazarFX {bench.lowW}×{bench.lowH}
+                            </td>
+                            <td className="py-1 pr-3 text-emerald-300">{bench.fxMs.toFixed(2)} мс</td>
+                            <td className="py-1 text-emerald-300">{bench.fxFps}</td>
+                          </tr>
+                          <tr className="border-t border-zinc-800">
+                            <td className="py-1 pr-3 font-sans text-zinc-400" colSpan={2}>
+                              Выигрыш по времени кадра
+                            </td>
+                            <td className="py-1 text-emerald-400">{bench.speedup.toFixed(2)}×</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <div className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+                        {bench.speedup >= 1
+                          ? `На этом устройстве BazarFX отрисовывает кадр в ${bench.speedup.toFixed(
+                              2,
+                            )} раза быстрее полного разрешения при ${Math.round(
+                              bench.renderScale * 100,
+                            )}% пикселей сцены.`
+                          : `На этом устройстве пайплайн дороже, чем сцена в полном разрешении: поднимите внутреннее разрешение или выключите temporal/поток.`}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
