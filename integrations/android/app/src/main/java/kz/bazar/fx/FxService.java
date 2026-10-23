@@ -20,6 +20,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.DisplayMetrics;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -143,24 +144,43 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         return START_NOT_STICKY;
     }
 
+    private boolean starting;
+
     private void startPipeline(int resultCode, Intent data) {
+        if (starting || running) return;
+        starting = true;
         try {
             startPipelineInternal(resultCode, data);
         } catch (Throwable t) {
             FxLog.e("startPipeline: " + t, t);
-            notifyFailure("Не удалось начать захват: " + t.getClass().getSimpleName());
+            notifyFailure("Не удалось начать захват: " + t.getClass().getSimpleName()
+                    + ". Подробности — в логе BazarFX.");
             stopSelf();
+        } finally {
+            starting = false;
         }
     }
 
     private void startPipelineInternal(int resultCode, Intent data) {
         MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         if (manager == null) {
+            notifyFailure("На этом устройстве нет MediaProjection");
             stopSelf();
             return;
         }
-        projection = manager.getMediaProjection(resultCode, data);
+
+        FxLog.i("Шаг 1/4: получаем проекцию экрана");
+        try {
+            projection = manager.getMediaProjection(resultCode, data);
+        } catch (Throwable t) {
+            FxLog.e("getMediaProjection: " + t, t);
+            notifyFailure("Система не дала доступ к экрану: " + t.getClass().getSimpleName()
+                    + ". Разреши захват заново — токен одноразовый.");
+            stopSelf();
+            return;
+        }
         if (projection == null) {
+            notifyFailure("Система вернула пустую проекцию. Включи BazarFX заново.");
             stopSelf();
             return;
         }
@@ -168,6 +188,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         projectionCallback = new MediaProjection.Callback() {
             @Override
             public void onStop() {
+                FxLog.w("Проекция остановлена системой");
                 handler.post(new Runnable() {
                     @Override
                     public void run() {
@@ -176,13 +197,27 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                 });
             }
         };
-        projection.registerCallback(projectionCallback, handler);
+        try {
+            projection.registerCallback(projectionCallback, handler);
+        } catch (Throwable t) {
+            FxLog.e("registerCallback: " + t, t);
+        }
 
-        showOverlay();
+        FxLog.i("Шаг 2/4: показываем оверлей");
+        try {
+            showOverlay();
+        } catch (Throwable t) {
+            FxLog.e("showOverlay: " + t, t);
+            notifyFailure("Не удалось показать оверлей: " + t.getClass().getSimpleName()
+                    + ". Проверь разрешение «поверх других приложений».");
+            stopSelf();
+            return;
+        }
         running = true;
         isRunning = true;
 
         // Ждём, пока GL-поток создаст SurfaceTexture, и только потом создаём VirtualDisplay.
+        FxLog.i("Шаг 3/4: ждём GL-поверхность");
         waitForSurfaceTexture();
     }
 
@@ -266,9 +301,10 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         try {
             windowManager.addView(glView, overlayParams);
             glView.onResume();
-        } catch (Exception e) {
-            stopSelf();
-            return;
+            FxLog.i("Оверлей добавлен: " + overlayParams.width + "x" + overlayParams.height);
+        } catch (Throwable t) {
+            FxLog.e("addView(overlay): " + t, t);
+            throw new RuntimeException("addView оверлея: " + t, t);
         }
 
         if (settings.showBubble) {
@@ -345,7 +381,8 @@ public class FxService extends Service implements FxRenderer.StatsListener {
 
         try {
             windowManager.addView(bubble, bubbleParams);
-        } catch (Exception ignored) {
+        } catch (Throwable t) {
+            FxLog.w("Плавающая кнопка не добавлена: " + t);
         }
     }
 
@@ -553,7 +590,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                     null,
                     handler);
             renderer.onSurfaceSizeChanged(metrics.widthPixels, metrics.heightPixels);
-            FxLog.i("VirtualDisplay создан: " + metrics.widthPixels + "x" + metrics.heightPixels);
+            FxLog.i("Шаг 4/4: VirtualDisplay создан: " + metrics.widthPixels + "x" + metrics.heightPixels);
         } catch (Throwable t) {
             // SecurityException (повторный захват), IllegalStateException (проекция остановлена)
             FxLog.e("Не удалось создать VirtualDisplay: " + t, t);
@@ -602,13 +639,38 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         }
     }
 
+    /**
+     * Размер экрана.
+     *
+     * ВАЖНО: у сервиса нельзя вызывать Context#getDisplay() — контекст сервиса не
+     * привязан к дисплею, и метод бросает UnsupportedOperationException. Именно
+     * из-за этого «Включить» падало с ошибкой захвата. Ходим через DisplayManager,
+     * а если и он недоступен — берём метрики ресурсов.
+     */
     private DisplayMetrics currentMetrics() {
         DisplayMetrics metrics = new DisplayMetrics();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            getDisplay().getRealMetrics(metrics);
-        } else {
-            windowManager.getDefaultDisplay().getRealMetrics(metrics);
+        try {
+            DisplayManager displayManager = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+            Display display = displayManager != null
+                    ? displayManager.getDisplay(Display.DEFAULT_DISPLAY) : null;
+            if (display != null) {
+                display.getRealMetrics(metrics);
+                if (metrics.widthPixels > 0 && metrics.heightPixels > 0) return metrics;
+            }
+        } catch (Throwable t) {
+            FxLog.w("DisplayManager.getDisplay: " + t);
         }
+        try {
+            Display display = windowManager.getDefaultDisplay();
+            if (display != null) {
+                display.getRealMetrics(metrics);
+                if (metrics.widthPixels > 0 && metrics.heightPixels > 0) return metrics;
+            }
+        } catch (Throwable t) {
+            FxLog.w("getDefaultDisplay: " + t);
+        }
+        metrics.setTo(getResources().getDisplayMetrics());
+        FxLog.w("Размер экрана взят из ресурсов: " + metrics.widthPixels + "x" + metrics.heightPixels);
         return metrics;
     }
 
@@ -684,7 +746,9 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                     ? new Notification.Builder(this, "bazarfx_errors")
                     : new Notification.Builder(this);
-            Intent open = new Intent(this, MainActivity.class);
+            Intent open = new Intent(this, MainActivity.class)
+                    .putExtra(MainActivity.EXTRA_SHOW_LOG, true)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
             PendingIntent pending = PendingIntent.getActivity(this, 3, open,
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                             ? PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
