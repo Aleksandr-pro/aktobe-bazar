@@ -24,6 +24,8 @@ import android.widget.Toast;
 /** Настройки и запуск фонового режима BazarFX. */
 public class MainActivity extends Activity {
 
+    public static final String EXTRA_SHOW_LOG = "showLog";
+
     private static final int REQ_CAPTURE = 1001;
     private static final int REQ_NOTIFICATIONS = 1002;
 
@@ -49,6 +51,18 @@ public class MainActivity extends Activity {
         settings = FxSettings.load(this);
         setContentView(buildUi());
         refreshStatus();
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_SHOW_LOG, false)) {
+            showLog();
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && intent.getBooleanExtra(EXTRA_SHOW_LOG, false)) {
+            showLog();
+        }
     }
 
     private View buildUi() {
@@ -297,6 +311,7 @@ public class MainActivity extends Activity {
         }
 
         Toast.makeText(this, "BazarFX включён — можно открывать игру", Toast.LENGTH_LONG).show();
+        FxLog.i("Запрошен захват экрана, запускаем сервис");
         // Сворачиваемся, чтобы сразу попасть в игру
         moveTaskToBack(true);
         refreshStatus();
@@ -325,7 +340,7 @@ public class MainActivity extends Activity {
     private void updateStatusText() {
         if (status == null) return;
         boolean overlay = Settings.canDrawOverlays(this);
-        status.setText("Версия 1.2 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
+        status.setText("Версия 1.3 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
                 + "\nРазрешение «поверх других приложений»: " + (overlay ? "есть" : "нет")
                 + "\nКачество: " + settings.qualityName()
                 + " · сцена " + Math.round(settings.renderScale * 100) + "%"
