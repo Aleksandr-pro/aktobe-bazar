@@ -234,8 +234,9 @@ public class MainActivity extends Activity {
                 }));
 
         root.addView(checkbox("Исключать оверлей из захвата",
-                "Обязательно для нормальной работы: иначе приложение снимает само себя. "
-                        + "Если на вашем устройстве экран становится чёрным — выключите.",
+                "Нужно, чтобы приложение не снимало само себя. Побочный эффект: пока BazarFX "
+                        + "работает, Android не даёт делать скриншоты и запись экрана. "
+                        + "Чтобы сделать скриншот — удержи кружок FX и выбери «Скрыть оверлей».",
                 settings.secureOverlay,
                 new OnChecked() {
                     @Override
@@ -258,7 +259,11 @@ public class MainActivity extends Activity {
                 + "разрешении — это делается интеграцией в движок (Unity-пакет в репозитории) "
                 + "или root-хуком.\n\n"
                 + "• Поток снимается через MediaProjection, поэтому Android каждый раз спрашивает "
-                + "разрешение на захват экрана — это системное требование, обойти нельзя.");
+                + "разрешение на захват экрана — это системное требование, обойти нельзя.\n\n"
+                + "• Пока оверлей показан, он заменяет собой экран: скриншоты и запись экрана "
+                + "блокируются системой (это цена того, что мы исключаем свой слой из захвата). "
+                + "Скрыть оверлей можно в любой момент: удержание кружка FX → «Скрыть оверлей». "
+                + "Игра, касания и скриншоты возвращаются сразу, захват при этом не выключается.");
         honest.setTextColor(0xFFA1A1AA);
         honest.setTextSize(13f);
         honest.setLineSpacing(dp(2), 1f);
@@ -340,7 +345,7 @@ public class MainActivity extends Activity {
     private void updateStatusText() {
         if (status == null) return;
         boolean overlay = Settings.canDrawOverlays(this);
-        status.setText("Версия 1.3.1 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
+        status.setText("Версия 1.4 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
                 + "\nРазрешение «поверх других приложений»: " + (overlay ? "есть" : "нет")
                 + "\nКачество: " + settings.qualityName()
                 + " · сцена " + Math.round(settings.renderScale * 100) + "%"

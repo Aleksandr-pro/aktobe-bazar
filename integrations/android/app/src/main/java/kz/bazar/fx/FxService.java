@@ -69,6 +69,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
 
     private FxRenderer renderer;
     private FxSettings settings;
+    private boolean overlayHidden;
     private LinearLayout qualityPanel;
     private WindowManager.LayoutParams qualityParams;
     private Handler handler;
@@ -277,6 +278,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
 
         int overlayFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                 | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
 
@@ -362,7 +364,11 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                         if (System.currentTimeMillis() - downTime < 400
                                 && Math.abs(event.getRawX() - touchX) < 12
                                 && Math.abs(event.getRawY() - touchY) < 12) {
-                            toggleBypass();
+                            if (overlayHidden) {
+                                setOverlayHidden(false);
+                            } else {
+                                toggleBypass();
+                            }
                         }
                         return true;
                     default:
@@ -383,6 +389,49 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             windowManager.addView(bubble, bubbleParams);
         } catch (Throwable t) {
             FxLog.w("Плавающая кнопка не добавлена: " + t);
+        }
+    }
+
+    /**
+     * Скрывает оверлей, не выключая BazarFX.
+     *
+     * Зачем: пока оверлей на экране, он его же и заменяет — и из-за
+     * FLAG_SECURE система не даёт сделать скриншот или записать экран.
+     * Скрытие убирает слой и флаг: игра видна как есть, скриншоты снова
+     * работают, а захват можно вернуть одним нажатием.
+     */
+    private void setOverlayHidden(boolean hidden) {
+        overlayHidden = hidden;
+        if (renderer != null) {
+            renderer.setOutputEnabled(!hidden);
+        }
+        if (glView != null && overlayParams != null) {
+            WindowManager.LayoutParams lp = overlayParams;
+            if (hidden) {
+                lp.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
+                lp.width = 1;
+                lp.height = 1;
+            } else {
+                if (settings.secureOverlay) {
+                    lp.flags |= WindowManager.LayoutParams.FLAG_SECURE;
+                }
+                lp.width = WindowManager.LayoutParams.MATCH_PARENT;
+                lp.height = WindowManager.LayoutParams.MATCH_PARENT;
+            }
+            try {
+                windowManager.updateViewLayout(glView, lp);
+                FxLog.i(hidden ? "Оверлей скрыт (игра без наложения)" : "Оверлей показан");
+            } catch (Throwable t) {
+                FxLog.w("updateViewLayout: " + t);
+            }
+        }
+        updateBubbleText();
+        try {
+            android.widget.Toast.makeText(getApplicationContext(),
+                    hidden ? "Оверлей скрыт — игра и скриншоты работают как обычно"
+                            : "Оверлей BazarFX включён",
+                    android.widget.Toast.LENGTH_SHORT).show();
+        } catch (Throwable ignored) {
         }
     }
 
@@ -419,6 +468,22 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             });
             panel.addView(item);
         }
+
+        final TextView hideItem = new TextView(this);
+        hideItem.setText(overlayHidden
+                ? "▣ Показать оверлей BazarFX"
+                : "▢ Скрыть оверлей (игра и скриншоты как обычно)");
+        hideItem.setTextColor(0xFFFBBF24);
+        hideItem.setTextSize(12f);
+        hideItem.setPadding(0, pad, 0, pad / 2);
+        hideItem.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                setOverlayHidden(!overlayHidden);
+                hideQualityPanel();
+            }
+        });
+        panel.addView(hideItem);
 
         TextView off = new TextView(this);
         off.setText("Скрыть панель");
@@ -505,6 +570,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                 }
             }
             updateBubbleText();
+            if (renderer != null) renderer.setOutputEnabled(!overlayHidden);
             updateNotification(lastStats.isEmpty() ? qualityLine() : qualityLine() + "\n" + lastStats);
         } catch (Throwable t) {
             FxLog.e("reloadSettings: " + t, t);
@@ -545,6 +611,11 @@ public class FxService extends Service implements FxRenderer.StatsListener {
     private void updateBubbleText() {
         if (bubble == null) return;
         boolean bypass = renderer != null && renderer.isBypass();
+        if (overlayHidden) {
+            bubble.setText("ON");
+            bubble.setBackgroundColor(0xB34A3508);
+            return;
+        }
         bubble.setText(bypass ? "OFF" : "FX");
         bubble.setBackgroundColor(bypass ? 0xB34A1D1D : 0xB3123F33);
     }
