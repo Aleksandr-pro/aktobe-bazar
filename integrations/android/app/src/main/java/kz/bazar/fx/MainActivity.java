@@ -219,6 +219,32 @@ public class MainActivity extends Activity {
                     }
                 }));
 
+        root.addView(checkbox("Авто-качество",
+                "Если устройство не успевает, BazarFX сам снижает масштаб сцены, "
+                        + "чтобы картинка оставалась плавной. Лучше оставить включённым.",
+                settings.autoQuality,
+                new OnChecked() {
+                    @Override
+                    public void onChecked(boolean checked) {
+                        settings.autoQuality = checked;
+                        settings.save(MainActivity.this);
+                        pushToService();
+                    }
+                }));
+
+        root.addView(checkbox("Сравнение «до/после»",
+                "Левая половина экрана — как отдаёт игра, правая — после BazarFX, "
+                        + "разделитель зелёный. Самый быстрый способ увидеть разницу.",
+                settings.splitCompare,
+                new OnChecked() {
+                    @Override
+                    public void onChecked(boolean checked) {
+                        settings.splitCompare = checked;
+                        settings.save(MainActivity.this);
+                        pushToService();
+                    }
+                }));
+
         root.addView(sectionHeader("Поведение"));
 
         root.addView(checkbox("Плавающая кнопка",
@@ -345,12 +371,14 @@ public class MainActivity extends Activity {
     private void updateStatusText() {
         if (status == null) return;
         boolean overlay = Settings.canDrawOverlays(this);
-        status.setText("Версия 1.4 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
+        status.setText("Версия 1.5 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
                 + "\nРазрешение «поверх других приложений»: " + (overlay ? "есть" : "нет")
                 + "\nКачество: " + settings.qualityName()
                 + " · сцена " + Math.round(settings.renderScale * 100) + "%"
                 + "\nГенерация кадров: " + (settings.frameGen ? "вкл" : "выкл")
-                + "\nTAA: " + (settings.temporal ? "вкл" : "выкл"));
+                + "\nTAA: " + (settings.temporal ? "вкл" : "выкл")
+                + "\nАвто-качество: " + (settings.autoQuality ? "вкл" : "выкл")
+                + "\nСравнение «до/после»: " + (settings.splitCompare ? "вкл" : "выкл"));
     }
 
     // ------------------------------------------------------------ UI helpers
