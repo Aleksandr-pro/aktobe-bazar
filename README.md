@@ -7,3 +7,8 @@
 - TypeScript
 - Tailwind CSS
 - Prisma + PostgreSQL (планируется)
+
+## BazarFX
+Рендер-технология «DLSS для Android»: апскейл из низкого разрешения + temporal
+сглаживание + генерация кадров. Живая демонстрация — `/fx`, код — `lib/fx/`,
+описание — [docs/BAZARFX.md](docs/BAZARFX.md).
