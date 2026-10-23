@@ -8,11 +8,13 @@ export const metadata: Metadata = {
     'Прямая ссылка на BazarFX.apk: апскейлер, шарпенинг и генерация кадров поверх любых игр. Android 8+, без root.',
 };
 
-// Пинуем коммит, а не @main: jsDelivr кэширует @main до 7 дней и отдавал бы старую версию.
-const CDN_LINK =
-  'https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.6/integrations/android/BazarFX.apk';
-const GITHUB_MIRROR =
-  'https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk';
+// Ссылки ведут прямо на файлы в репозитории: так их можно скачать без сайта.
+// Версию фиксируем тегом, иначе после следующего обновления ссылка «поедет».
+const REPO = 'https://github.com/Aleksandr-pro/aktobe-bazar';
+const REPO_TAG = 'apk-1.6';
+const RAW_LINK = `${REPO}/raw/${REPO_TAG}/integrations/android/BazarFX.apk`;
+const CDN_LINK = `https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@${REPO_TAG}/integrations/android/BazarFX.apk`;
+const GITHUB_PAGE = `${REPO}/blob/${REPO_TAG}/integrations/android/BazarFX.apk`;
 
 function apkInfo() {
   const file = path.join(process.cwd(), 'public', 'BazarFX.apk');
@@ -76,8 +78,7 @@ export default function InstallPage() {
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <a
-              href="/download/BazarFX.apk?v=1.6"
-              download="BazarFX.apk"
+              href={RAW_LINK}
               className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 py-4 text-base font-semibold text-white transition-colors hover:bg-emerald-700"
             >
               <span className="text-xl leading-none">↓</span>
@@ -87,20 +88,36 @@ export default function InstallPage() {
               href={CDN_LINK}
               className="flex items-center justify-center rounded-2xl border border-zinc-700 px-6 py-4 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-900"
             >
-              CDN-зеркало (jsDelivr)
+              CDN (если GitHub зависает)
             </a>
           </div>
 
           <div className="mt-4 flex flex-col gap-2 text-[11px] leading-relaxed text-zinc-500">
             <div className="space-y-1">
               <div>
-                Прямые ссылки:
-                <br />
-                • <a href="/BazarFX.apk" className="break-all text-emerald-400 underline decoration-emerald-800">/BazarFX.apk</a> — с этого сайта
-                <br />
-                • <a href={CDN_LINK} className="break-all text-zinc-300 underline decoration-zinc-700">cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.6/integrations/android/BazarFX.apk</a> — CDN, качается без зависаний
-                <br />
-                • <a href={GITHUB_MIRROR} className="break-all text-zinc-400 underline decoration-zinc-700">github.com/.../raw/main/integrations/android/BazarFX.apk</a> — GitHub
+                Все ссылки — на файл в репозитории{' '}
+                <span className="font-mono text-zinc-400">Aleksandr-pro/aktobe-bazar</span>, тег{' '}
+                <span className="font-mono text-zinc-400">{REPO_TAG}</span>:
+                <br />•{' '}
+                <a href={RAW_LINK} className="break-all text-emerald-400 underline decoration-emerald-800">
+                  github.com/Aleksandr-pro/aktobe-bazar/raw/{REPO_TAG}/integrations/android/BazarFX.apk
+                </a>{' '}
+                — прямое скачивание
+                <br />•{' '}
+                <a href={CDN_LINK} className="break-all text-zinc-300 underline decoration-zinc-700">
+                  cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@{REPO_TAG}/...
+                </a>{' '}
+                — CDN, без зависаний в Chrome на Android
+                <br />•{' '}
+                <a href={GITHUB_PAGE} className="break-all text-zinc-300 underline decoration-zinc-700">
+                  github.com/.../blob/{REPO_TAG}/integrations/android/BazarFX.apk
+                </a>{' '}
+                — страница файла (кнопка «Download raw file»)
+                <br />•{' '}
+                <a href="/download/BazarFX.apk" className="break-all text-zinc-400 underline decoration-zinc-700">
+                  /download/BazarFX.apk
+                </a>{' '}
+                — отдача с этого сайта (спасательный вариант)
               </div>
             </div>
             <div>
