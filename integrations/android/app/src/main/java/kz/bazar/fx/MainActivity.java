@@ -36,6 +36,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        FxLog.init(this);
         settings = FxSettings.load(this);
         setContentView(buildUi());
         refreshStatus();
@@ -104,6 +105,41 @@ public class MainActivity extends Activity {
                 startService(intent);
                 Toast.makeText(MainActivity.this, "BazarFX остановлен", Toast.LENGTH_SHORT).show();
                 refreshStatus();
+            }
+        });
+
+        LinearLayout logRow = new LinearLayout(this);
+        logRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(8);
+        root.addView(logRow, rowLp);
+
+        Button logButton = new Button(this);
+        logButton.setText("Лог");
+        logButton.setBackgroundColor(0xFF27272A);
+        logButton.setTextColor(0xFFF4F4F5);
+        logRow.addView(logButton, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        logButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showLog();
+            }
+        });
+
+        Button shareButton = new Button(this);
+        shareButton.setText("Отправить лог");
+        shareButton.setBackgroundColor(0xFF27272A);
+        shareButton.setTextColor(0xFFF4F4F5);
+        LinearLayout.LayoutParams shareLp = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        shareLp.leftMargin = dp(8);
+        logRow.addView(shareButton, shareLp);
+        shareButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                shareLog();
             }
         });
 
@@ -256,7 +292,8 @@ public class MainActivity extends Activity {
     private void updateStatusText() {
         if (status == null) return;
         boolean overlay = Settings.canDrawOverlays(this);
-        status.setText("Разрешение «поверх других приложений»: " + (overlay ? "есть" : "нет")
+        status.setText("Версия 1.1 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
+                + "\nРазрешение «поверх других приложений»: " + (overlay ? "есть" : "нет")
                 + "\nСцена: " + Math.round(settings.renderScale * 100) + "% пикселей"
                 + "\nГенерация кадров: " + (settings.frameGen ? "вкл" : "выкл")
                 + "\nTAA: " + (settings.temporal ? "вкл" : "выкл"));
@@ -340,6 +377,72 @@ public class MainActivity extends Activity {
         hintView.setPadding(dp(36), 0, 0, 0);
         box.addView(hintView);
         return box;
+    }
+
+    private void showLog() {
+        String text = FxLog.read();
+        if (text.length() > 20000) {
+            text = text.substring(text.length() - 20000);
+        }
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(10f);
+        view.setTextColor(0xFFE4E4E7);
+        view.setTypeface(android.graphics.Typeface.MONOSPACE);
+        view.setPadding(dp(12), dp(12), dp(12), dp(12));
+        view.setTextIsSelectable(true);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(view);
+        scroll.setBackgroundColor(0xFF0B0B0E);
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Лог BazarFX")
+                .setView(scroll)
+                .setPositiveButton("Закрыть", null)
+                .setNeutralButton("Копировать", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface dialog, int which) {
+                        copyLog();
+                    }
+                })
+                .setNegativeButton("Очистить", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface dialog, int which) {
+                        FxLog.clear();
+                        Toast.makeText(MainActivity.this, "Лог очищен", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .show();
+    }
+
+    private void shareLog() {
+        try {
+            String text = FxLog.read();
+            if (text == null || text.trim().isEmpty()) {
+                Toast.makeText(this, "Лог пока пуст", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            // Без AndroidX: делимся текстом, файл не отдаём (file:// запрещён с API 24)
+            Intent send = new Intent(Intent.ACTION_SEND)
+                    .setType("text/plain")
+                    .putExtra(Intent.EXTRA_SUBJECT, "Лог BazarFX")
+                    .putExtra(Intent.EXTRA_TEXT, text);
+            startActivity(Intent.createChooser(send, "Отправить лог"));
+        } catch (Throwable t) {
+            Toast.makeText(this, "Не удалось отправить: " + t, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void copyLog() {
+        try {
+            android.content.ClipboardManager clipboard =
+                    (android.content.ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Лог BazarFX", FxLog.read()));
+            Toast.makeText(this, "Лог скопирован", Toast.LENGTH_SHORT).show();
+        } catch (Throwable t) {
+            Toast.makeText(this, "Не удалось скопировать: " + t, Toast.LENGTH_LONG).show();
+        }
     }
 
     private int dp(int value) {
