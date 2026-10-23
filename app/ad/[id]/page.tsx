@@ -1,9 +1,10 @@
 import { notFound } from 'next/navigation';
 
-export default function AdDetail({ params }: { params: { id: string } }) {
+export default async function AdDetail({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   // Mock data for now
   const ad = {
-    id: params.id,
+    id,
     title: 'Продаю Toyota Camry 2018',
     price: 8500000,
     description: 'Отличное состояние, полный электропакет, зимняя резина в комплекте. Пробег 120 тыс. км. Один владелец.',
