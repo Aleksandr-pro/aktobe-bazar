@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 // Пинуем коммит, а не @main: jsDelivr кэширует @main до 7 дней и отдавал бы старую версию.
 const CDN_LINK =
-  'https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.2/integrations/android/BazarFX.apk';
+  'https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.2.1/integrations/android/BazarFX.apk';
 const GITHUB_MIRROR =
   'https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk';
 
@@ -76,7 +76,7 @@ export default function InstallPage() {
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <a
-              href="/download/BazarFX.apk?v=1.2"
+              href="/download/BazarFX.apk?v=1.2.1"
               download="BazarFX.apk"
               className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 py-4 text-base font-semibold text-white transition-colors hover:bg-emerald-700"
             >
@@ -98,7 +98,7 @@ export default function InstallPage() {
                 <br />
                 • <a href="/BazarFX.apk" className="break-all text-emerald-400 underline decoration-emerald-800">/BazarFX.apk</a> — с этого сайта
                 <br />
-                • <a href={CDN_LINK} className="break-all text-zinc-300 underline decoration-zinc-700">cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.2/integrations/android/BazarFX.apk</a> — CDN, качается без зависаний
+                • <a href={CDN_LINK} className="break-all text-zinc-300 underline decoration-zinc-700">cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.2.1/integrations/android/BazarFX.apk</a> — CDN, качается без зависаний
                 <br />
                 • <a href={GITHUB_MIRROR} className="break-all text-zinc-400 underline decoration-zinc-700">github.com/.../raw/main/integrations/android/BazarFX.apk</a> — GitHub
               </div>
