@@ -8,6 +8,8 @@ export const metadata: Metadata = {
     'Прямая ссылка на BazarFX.apk: апскейлер, шарпенинг и генерация кадров поверх любых игр. Android 8+, без root.',
 };
 
+const CDN_LINK =
+  'https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@main/integrations/android/BazarFX.apk';
 const GITHUB_MIRROR =
   'https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk';
 
@@ -81,26 +83,24 @@ export default function InstallPage() {
               Скачать APK{sizeKb > 0 ? ` · ${sizeKb} КБ` : ''}
             </a>
             <a
-              href={GITHUB_MIRROR}
+              href={CDN_LINK}
               className="flex items-center justify-center rounded-2xl border border-zinc-700 px-6 py-4 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-900"
             >
-              Зеркало на GitHub
+              CDN-зеркало (jsDelivr)
             </a>
           </div>
 
           <div className="mt-4 flex flex-col gap-2 text-[11px] leading-relaxed text-zinc-500">
-            <div>
-              Прямая ссылка:{' '}
-              <a href="/BazarFX.apk" className="break-all text-emerald-400 underline decoration-emerald-800">
-                /BazarFX.apk
-              </a>{' '}
-              (эта страница) · зеркало:{' '}
-              <a
-                href={GITHUB_MIRROR}
-                className="break-all text-zinc-400 underline decoration-zinc-700 hover:text-zinc-200"
-              >
-                github.com/Aleksandr-pro/aktobe-bazar → integrations/android/BazarFX.apk
-              </a>
+            <div className="space-y-1">
+              <div>
+                Прямые ссылки:
+                <br />
+                • <a href="/BazarFX.apk" className="break-all text-emerald-400 underline decoration-emerald-800">/BazarFX.apk</a> — с этого сайта
+                <br />
+                • <a href={CDN_LINK} className="break-all text-zinc-300 underline decoration-zinc-700">cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@main/integrations/android/BazarFX.apk</a> — CDN, качается без зависаний
+                <br />
+                • <a href={GITHUB_MIRROR} className="break-all text-zinc-400 underline decoration-zinc-700">github.com/.../raw/main/integrations/android/BazarFX.apk</a> — GitHub
+              </div>
             </div>
             <div>
               Подпись APK: схема v2 + v3 (debug-ключ). Play Protect может предупредить о
@@ -128,7 +128,7 @@ export default function InstallPage() {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/BazarFX-qr.png" alt="QR-код: прямая ссылка на BazarFX.apk" width={170} height={170} />
             <div className="mt-2 max-w-[170px] text-center text-[10px] leading-tight text-zinc-600">
-              Наведи камеру телефона — откроется прямая ссылка на APK
+              Наведи камеру телефона — откроется CDN-ссылка на APK
             </div>
           </div>
         </section>
@@ -157,6 +157,7 @@ export default function InstallPage() {
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs text-zinc-400">
             <div className="mb-1 font-semibold text-zinc-200">Если что-то не так</div>
             <ul className="space-y-1">
+              <li>• Загрузка «зависла» на 100% → файл уже скачан: открой Chrome → ⋮ → «Загрузки». Если не открывается — качай по CDN-ссылке.</li>
               <li>• Чёрный экран → выключи «Исключать оверлей из захвата».</li>
               <li>• Не ставится → разреши установку из этого источника в настройках.</li>
               <li>• Лагает → уменьши «Разрешение сцены» и выключи генерацию кадров.</li>
