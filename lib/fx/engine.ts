@@ -1,14 +1,25 @@
 import {
   COPY_FRAG,
   DISPLAY_FRAG,
+  FLOW_BLOCK_FRAG,
+  FLOW_UPSCALE_FRAG,
   FULLSCREEN_VERT,
   SCENE_FRAG,
   SHARPEN_FRAG,
   TEMPORAL_FRAG,
   UPSCALE_FRAG,
+  VIDEO_LOW_FRAG,
 } from './shaders';
 
+export type FxSource = 'game' | 'video';
+
 export type FxOptions = {
+  /** Where the frames come from: the built-in procedural scene or the user's video. */
+  source: FxSource;
+  /** Where motion vectors come from: engine G-buffer, optical flow, or none. */
+  flow: 'auto' | 'optical' | 'none';
+  /** Cost/quality of the block-matching optical flow (video mode). */
+  flowQuality: 'fast' | 'balanced' | 'accurate';
   /** Internal render resolution as a fraction of the output resolution (0.25 – 1). */
   renderScale: number;
   /** Spatial upscaler (Catmull-Rom reconstruction). */
@@ -29,6 +40,9 @@ export type FxOptions = {
 };
 
 export const DEFAULT_OPTIONS: FxOptions = {
+  source: 'game',
+  flow: 'auto',
+  flowQuality: 'balanced',
   renderScale: 0.5,
   upscale: true,
   temporal: true,
@@ -51,6 +65,8 @@ export type FxStats = {
   fullW: number;
   fullH: number;
   scenePixelsPct: number;
+  /** false, пока не пришёл первый кадр видео/сцены */
+  ready: boolean;
 };
 
 type Program = {
@@ -174,6 +190,9 @@ export class BazarFX {
   private options: FxOptions;
 
   private sceneProgram: Program;
+  private videoProgram: Program;
+  private flowProgram: Program;
+  private flowUpscaleProgram: Program;
   private upscaleProgram: Program;
   private copyProgram: Program;
   private temporalProgram: Program;
@@ -183,6 +202,21 @@ export class BazarFX {
   private sceneTarget: Target | null = null;
   private sceneVelocity: WebGLTexture | null = null;
   private sceneFbo: WebGLFramebuffer | null = null;
+
+  private videoTexture: WebGLTexture | null = null;
+  private neutralVelocity: WebGLTexture | null = null;
+  private video: HTMLVideoElement | null = null;
+  private lastVideoTime = -1;
+  private videoFrameInterval = 0;
+  private videoFramePending = false;
+  private videoRVFC = 0;
+  private lowColorTarget: Target | null = null;
+  private lowPrevTarget: Target | null = null;
+  private flowTarget: Target | null = null;
+  private flowBlurTarget: Target | null = null;
+  private flowGridW = 1;
+  private flowGridH = 1;
+  private lowPrevValid = false;
 
   private upTarget: Target | null = null;
   private history: [Target | null, Target | null] = [null, null];
@@ -225,6 +259,7 @@ export class BazarFX {
     fullW: 1,
     fullH: 1,
     scenePixelsPct: 0,
+    ready: false,
   };
 
   private sceneFrameCount = 0;
@@ -263,6 +298,9 @@ export class BazarFX {
     gl.disable(gl.BLEND);
 
     this.sceneProgram = createProgram(gl, SCENE_FRAG);
+    this.videoProgram = createProgram(gl, VIDEO_LOW_FRAG);
+    this.flowProgram = createProgram(gl, FLOW_BLOCK_FRAG);
+    this.flowUpscaleProgram = createProgram(gl, FLOW_UPSCALE_FRAG);
     this.upscaleProgram = createProgram(gl, UPSCALE_FRAG);
     this.copyProgram = createProgram(gl, COPY_FRAG);
     this.temporalProgram = createProgram(gl, TEMPORAL_FRAG);
@@ -296,6 +334,99 @@ export class BazarFX {
     if (prev.renderScale !== this.options.renderScale) {
       this.applySize();
     }
+    if (prev.flowQuality !== this.options.flowQuality) {
+      this.applySize();
+    }
+    if (prev.source !== this.options.source || prev.flow !== this.options.flow) {
+      this.historyValid = false;
+      this.hasPreviousFrame = false;
+      this.sceneFramesTotal = 0;
+      this.lowPrevValid = false;
+      this.lastVideoTime = -1;
+    }
+  }
+
+  /**
+   * Подключает видео как источник кадров. Видео трактуется как «кадр игры в
+   * низком разрешении»: оно сжимается в lowRes и дальше идёт по пайплайну.
+   * Передайте null, чтобы вернуться к процедурной сцене.
+   */
+  setVideo(video: HTMLVideoElement | null) {
+    this.cancelVideoCallback();
+    this.video = video;
+    this.videoFramePending = false;
+    this.lastVideoTime = -1;
+    this.registerVideoCallback();
+    this.videoFrameInterval = 0;
+    this.lowPrevValid = false;
+    this.historyValid = false;
+    this.hasPreviousFrame = false;
+    this.sceneFramesTotal = 0;
+    this.options = { ...this.options, source: video ? 'video' : 'game' };
+  }
+
+  /** true, если видео уже даёт кадры и их можно прогонять через пайплайн. */
+  hasVideoFrame(): boolean {
+    return !!this.video && this.video.readyState >= 2 && this.video.videoWidth > 0;
+  }
+
+  private registerVideoCallback() {
+    const video = this.video as (HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number;
+    }) | null;
+    if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
+    this.videoRVFC = video.requestVideoFrameCallback((_now, meta) => {
+      const t = typeof meta?.mediaTime === 'number' ? meta.mediaTime : this.video?.currentTime ?? 0;
+      if (this.consumeVideoTimestamp(t)) {
+        this.videoFramePending = true;
+      }
+      this.registerVideoCallback();
+    });
+  }
+
+  private cancelVideoCallback() {
+    const video = this.video as (HTMLVideoElement & { cancelVideoFrameCallback?: (h: number) => void }) | null;
+    if (video && typeof video.cancelVideoFrameCallback === 'function' && this.videoRVFC) {
+      video.cancelVideoFrameCallback(this.videoRVFC);
+    }
+    this.videoRVFC = 0;
+  }
+
+  /** Обновляет интервал между кадрами видео; false — если это разрыв/seek. */
+  private consumeVideoTimestamp(t: number): boolean {
+    const delta = t - this.lastVideoTime;
+    const discontinuity = this.lastVideoTime < 0 || delta <= 0 || delta > 0.35;
+    if (discontinuity) {
+      this.historyValid = false;
+      this.hasPreviousFrame = false;
+      this.sceneFramesTotal = 0;
+      this.lowPrevValid = false;
+    } else {
+      this.videoFrameInterval =
+        this.videoFrameInterval > 0 ? this.videoFrameInterval * 0.8 + delta * 0.2 : delta;
+    }
+    this.lastVideoTime = t;
+    return !discontinuity;
+  }
+
+  /** Забирает флаг «пришёл новый кадр видео». */
+  private consumeVideoFrame(): boolean {
+    const video = this.video;
+    if (!video || !this.hasVideoFrame()) {
+      this.videoFramePending = false;
+      return false;
+    }
+    const hasRVFC = typeof (video as any).requestVideoFrameCallback === 'function';
+    if (hasRVFC) {
+      const pending = this.videoFramePending;
+      this.videoFramePending = false;
+      return pending;
+    }
+    // Fallback: сравниваем currentTime (для MediaStream не работает, но там rVFC есть)
+    const t = video.currentTime;
+    if (t === this.lastVideoTime) return false;
+    this.consumeVideoTimestamp(t);
+    return true;
   }
 
   resize(cssWidth: number, cssHeight: number, dpr: number) {
@@ -338,6 +469,10 @@ export class BazarFX {
     deleteTarget(gl, this.history[1]);
     deleteTarget(gl, this.finals[0]);
     deleteTarget(gl, this.finals[1]);
+    deleteTarget(gl, this.lowColorTarget);
+    deleteTarget(gl, this.lowPrevTarget);
+    deleteTarget(gl, this.flowTarget);
+    deleteTarget(gl, this.flowBlurTarget);
     if (this.sceneFbo) gl.deleteFramebuffer(this.sceneFbo);
     if (this.sceneVelocity) gl.deleteTexture(this.sceneVelocity);
 
@@ -360,6 +495,16 @@ export class BazarFX {
     this.sceneVelocity = velocity;
     this.sceneFbo = fbo;
 
+    // Video-mode buffers: low-res colour, its previous frame and the flow field.
+    const step = this.flowParams().step;
+    this.flowGridW = Math.max(8, Math.ceil(this.lowW / step));
+    this.flowGridH = Math.max(8, Math.ceil(this.lowH / step));
+    this.lowColorTarget = createTarget(gl, this.lowW, this.lowH);
+    this.lowPrevTarget = createTarget(gl, this.lowW, this.lowH);
+    this.flowTarget = createTarget(gl, this.flowGridW, this.flowGridH);
+    this.flowBlurTarget = createTarget(gl, this.lowW, this.lowH);
+    this.lowPrevValid = false;
+
     this.upTarget = createTarget(gl, this.fullW, this.fullH);
     this.history = [createTarget(gl, this.fullW, this.fullH), createTarget(gl, this.fullW, this.fullH)];
     this.finals = [createTarget(gl, this.fullW, this.fullH), createTarget(gl, this.fullW, this.fullH)];
@@ -370,9 +515,14 @@ export class BazarFX {
     this.historyValid = false;
     this.hasPreviousFrame = false;
 
-    for (const target of [this.history[0], this.history[1], this.finals[0], this.finals[1]]) {
+    for (const target of [this.history[0], this.history[1], this.finals[0], this.finals[1], this.lowPrevTarget]) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
       gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    for (const target of [this.flowTarget, this.flowBlurTarget]) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+      gl.clearColor(0.5, 0.5, 0.5, 1); // нулевой поток
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -391,6 +541,7 @@ export class BazarFX {
   stop() {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    this.cancelVideoCallback();
   }
 
   destroy() {
@@ -402,10 +553,19 @@ export class BazarFX {
     deleteTarget(gl, this.history[1]);
     deleteTarget(gl, this.finals[0]);
     deleteTarget(gl, this.finals[1]);
+    deleteTarget(gl, this.lowColorTarget);
+    deleteTarget(gl, this.lowPrevTarget);
+    deleteTarget(gl, this.flowTarget);
+    deleteTarget(gl, this.flowBlurTarget);
+    if (this.videoTexture) gl.deleteTexture(this.videoTexture);
+    if (this.neutralVelocity) gl.deleteTexture(this.neutralVelocity);
     if (this.sceneFbo) gl.deleteFramebuffer(this.sceneFbo);
     if (this.sceneVelocity) gl.deleteTexture(this.sceneVelocity);
     for (const p of [
       this.sceneProgram,
+      this.videoProgram,
+      this.flowProgram,
+      this.flowUpscaleProgram,
       this.upscaleProgram,
       this.copyProgram,
       this.temporalProgram,
@@ -430,23 +590,51 @@ export class BazarFX {
       this.pausedAt = 0;
     }
 
-    const cap = this.options.sceneFpsCap > 0 ? this.options.sceneFpsCap : 0;
-    const interval = cap > 0 ? 1000 / cap : 0;
-    const sinceScene = now - this.lastSceneTime;
-
     let phase = 0;
     let generated = false;
 
-    if (!cap || sinceScene >= interval - 0.5) {
-      this.renderSceneFrame(now);
-      this.lastSceneTime = now;
-      this.present(0);
-    } else if (this.options.frameGen && this.hasPreviousFrame) {
-      phase = Math.min(0.95, Math.max(0.05, sinceScene / interval));
-      this.present(phase);
-      generated = true;
+    if (this.options.source === 'video' && this.video) {
+      const video = this.video;
+      const newFrame = this.consumeVideoFrame();
+
+      if (newFrame) {
+        this.renderSceneFrame(now);
+        this.lastSceneTime = now;
+        this.present(0);
+      } else if (
+        this.options.frameGen &&
+        this.hasPreviousFrame &&
+        !video.paused &&
+        this.videoFrameInterval > 0
+      ) {
+        const interval = this.videoFrameInterval * 1000;
+        const since = now - this.lastSceneTime;
+        if (since < interval * 2.0) {
+          phase = Math.min(0.95, Math.max(0.05, since / interval));
+          this.present(phase);
+          generated = true;
+        } else {
+          this.present(0); // видео буферизуется — держим последний кадр
+        }
+      } else {
+        this.present(0); // пауза или выключенная генерация: просто показываем кадр
+      }
     } else {
-      return; // hold the last image
+      const cap = this.options.sceneFpsCap > 0 ? this.options.sceneFpsCap : 0;
+      const interval = cap > 0 ? 1000 / cap : 0;
+      const sinceScene = now - this.lastSceneTime;
+
+      if (!cap || sinceScene >= interval - 0.5) {
+        this.renderSceneFrame(now);
+        this.lastSceneTime = now;
+        this.present(0);
+      } else if (this.options.frameGen && this.hasPreviousFrame) {
+        phase = Math.min(0.95, Math.max(0.05, sinceScene / interval));
+        this.present(phase);
+        generated = true;
+      } else {
+        return; // hold the last image
+      }
     }
 
     this.presentCount++;
@@ -478,6 +666,7 @@ export class BazarFX {
         fullW: this.fullW,
         fullH: this.fullH,
         scenePixelsPct: Math.round((this.lowW * this.lowH * 1000) / (this.fullW * this.fullH)) / 10,
+        ready: true,
       };
       this.onStats?.({ ...this.stats });
 
@@ -551,33 +740,24 @@ export class BazarFX {
     this.startQuery();
     this.pollQuery();
 
-    const dt = this.lastSceneTime > 0 ? Math.min(0.1, (now - this.lastSceneTime) / 1000) : 1 / 60;
-    this.camZ += CAMERA_SPEED * dt;
     this.frameIndex++;
 
-    const jitterOn = this.options.temporal;
-    const jitterX = jitterOn ? halton(this.frameIndex, 2) - 0.5 : 0;
-    const jitterY = jitterOn ? halton(this.frameIndex, 3) - 0.5 : 0;
+    // ---- 1. scene at low resolution (движок или видео) ------------------
+    if (this.options.source === 'video' && this.video) {
+      this.renderVideoLowRes();
+    } else {
+      this.renderProceduralLowRes(now);
+    }
 
-    // ---- 1. scene at low resolution -------------------------------------
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneTarget!.fbo);
-    gl.viewport(0, 0, this.lowW, this.lowH);
-    gl.useProgram(this.sceneProgram.program);
-    this.setUniforms(this.sceneProgram, {
-      uResolution: [this.lowW, this.lowH],
-      uJitter: [jitterX, jitterY],
-      uCamZ: this.camZ,
-      uTime: (now - this.startTime) / 1000,
-      uCamMove: CAMERA_SPEED * dt,
-    });
-    this.drawQuad();
+    const lowTexture = this.lowTexture();
+    const velocityTexture = this.velocityTexture();
 
     // ---- 2. spatial reconstruction --------------------------------------
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.upTarget!.fbo);
     gl.viewport(0, 0, this.fullW, this.fullH);
     if (this.options.upscale) {
       gl.useProgram(this.upscaleProgram.program);
-      this.bindTexture(0, this.sceneTarget!.tex);
+      this.bindTexture(0, lowTexture);
       gl.uniform1i(this.upscaleProgram.uniforms.get('tLow') ?? null, 0);
       this.setUniforms(this.upscaleProgram, {
         uLowRes: [this.lowW, this.lowH],
@@ -585,7 +765,7 @@ export class BazarFX {
       });
     } else {
       gl.useProgram(this.copyProgram.program);
-      this.bindTexture(0, this.sceneTarget!.tex);
+      this.bindTexture(0, lowTexture);
       gl.uniform1i(this.copyProgram.uniforms.get('tSrc') ?? null, 0);
     }
     this.drawQuad();
@@ -603,7 +783,7 @@ export class BazarFX {
       gl.useProgram(this.temporalProgram.program);
       this.bindTexture(0, this.upTarget!.tex);
       this.bindTexture(1, read.tex);
-      this.bindTexture(2, this.sceneVelocity!);
+      this.bindTexture(2, velocityTexture);
       gl.uniform1i(this.temporalProgram.uniforms.get('tCurrent') ?? null, 0);
       gl.uniform1i(this.temporalProgram.uniforms.get('tHistory') ?? null, 1);
       gl.uniform1i(this.temporalProgram.uniforms.get('tVelocity') ?? null, 2);
@@ -655,6 +835,148 @@ export class BazarFX {
     this.endQuery();
   }
 
+  private lowTexture(): WebGLTexture {
+    if (this.options.source === 'video' && this.lowColorTarget) return this.lowColorTarget.tex;
+    return this.sceneTarget!.tex;
+  }
+
+  private velocityTexture(): WebGLTexture {
+    if (this.options.flow === 'none') return this.neutralVelocityTexture();
+    if (this.options.source === 'video') return this.flowBlurTarget!.tex;
+    return this.sceneVelocity!;
+  }
+
+  private neutralVelocityTexture(): WebGLTexture {
+    if (!this.neutralVelocity) {
+      const gl = this.gl;
+      this.neutralVelocity = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, this.neutralVelocity);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128, 128, 128, 255]));
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    }
+    return this.neutralVelocity;
+  }
+
+  private renderProceduralLowRes(now: number) {
+    const gl = this.gl;
+    const dt = this.lastSceneTime > 0 ? Math.min(0.1, (now - this.lastSceneTime) / 1000) : 1 / 60;
+    this.camZ += CAMERA_SPEED * dt;
+
+    const jitterOn = this.options.temporal;
+    const jitterX = jitterOn ? halton(this.frameIndex, 2) - 0.5 : 0;
+    const jitterY = jitterOn ? halton(this.frameIndex, 3) - 0.5 : 0;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.sceneTarget!.fbo);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+    gl.viewport(0, 0, this.lowW, this.lowH);
+    gl.useProgram(this.sceneProgram.program);
+    this.setUniforms(this.sceneProgram, {
+      uResolution: [this.lowW, this.lowH],
+      uJitter: [jitterX, jitterY],
+      uCamZ: this.camZ,
+      uTime: (now - this.startTime) / 1000,
+      uCamMove: CAMERA_SPEED * dt,
+    });
+    this.drawQuad();
+  }
+
+  /**
+   * Видео -> низкое разрешение + (опционально) оптический поток между кадрами.
+   * Это и есть «внешний» режим: игра рисует кадр, мы его апскейлим и дорисовываем.
+   */
+  private flowParams(): { step: number; search: number; taps: number } {
+    switch (this.options.flowQuality) {
+      case 'fast':
+        return { step: 4, search: 3, taps: 1 };
+      case 'accurate':
+        return { step: 2, search: 5, taps: 2 };
+      default:
+        return { step: 3, search: 4, taps: 1 };
+    }
+  }
+
+  private renderVideoLowRes() {
+    const gl = this.gl;
+    const video = this.video!;
+    if (!this.videoTexture) {
+      this.videoTexture = createTexture(gl, 1, 1, gl.LINEAR, gl.CLAMP_TO_EDGE);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    } catch {
+      return; // кадр ещё не декодирован
+    }
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    // «cover»-фит видео в кадр полотна
+    const videoAspect = video.videoWidth / Math.max(1, video.videoHeight);
+    const canvasAspect = this.lowW / Math.max(1, this.lowH);
+    let fitX = 1;
+    let fitY = 1;
+    if (videoAspect > canvasAspect) {
+      fitX = canvasAspect / videoAspect;
+    } else {
+      fitY = videoAspect / canvasAspect;
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.lowColorTarget!.fbo);
+    gl.viewport(0, 0, this.lowW, this.lowH);
+    gl.useProgram(this.videoProgram.program);
+    this.bindTexture(0, this.videoTexture);
+    gl.uniform1i(this.videoProgram.uniforms.get('tVideo') ?? null, 0);
+    this.setUniforms(this.videoProgram, {
+      uFitScale: [fitX, fitY],
+      uFitOffset: [(1 - fitX) * 0.5, (1 - fitY) * 0.5],
+      uLowResDarken: 0,
+    });
+    this.drawQuad();
+
+    // оптический поток
+    if (this.options.flow !== 'none' && this.lowPrevValid) {
+      // блочный поиск на грубой сетке
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.flowTarget!.fbo);
+      gl.viewport(0, 0, this.flowGridW, this.flowGridH);
+      gl.useProgram(this.flowProgram.program);
+      this.bindTexture(0, this.lowColorTarget!.tex);
+      this.bindTexture(1, this.lowPrevTarget!.tex);
+      gl.uniform1i(this.flowProgram.uniforms.get('tCur') ?? null, 0);
+      gl.uniform1i(this.flowProgram.uniforms.get('tPrev') ?? null, 1);
+      const params = this.flowParams();
+      this.setUniforms(this.flowProgram, {
+        uLowRes: [this.lowW, this.lowH],
+        uStep: params.step,
+        uSearch: params.search,
+        uTaps: params.taps,
+        uVelRange: VELOCITY_RANGE,
+      });
+      this.drawQuad();
+
+      // апскейл + сглаживание до lowRes
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.flowBlurTarget!.fbo);
+      gl.viewport(0, 0, this.lowW, this.lowH);
+      gl.useProgram(this.flowUpscaleProgram.program);
+      this.bindTexture(0, this.flowTarget!.tex);
+      gl.uniform1i(this.flowUpscaleProgram.uniforms.get('tFlow') ?? null, 0);
+      this.setUniforms(this.flowUpscaleProgram, { uLowRes: [this.lowW, this.lowH] });
+      this.drawQuad();
+    }
+
+    // сохраняем текущий кадр как предыдущий
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.lowPrevTarget!.fbo);
+    gl.viewport(0, 0, this.lowW, this.lowH);
+    gl.useProgram(this.copyProgram.program);
+    this.bindTexture(0, this.lowColorTarget!.tex);
+    gl.uniform1i(this.copyProgram.uniforms.get('tSrc') ?? null, 0);
+    this.drawQuad();
+    this.lowPrevValid = true;
+  }
+
   private present(phase: number) {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -664,11 +986,12 @@ export class BazarFX {
     const current = this.finals[this.finalIndex]!;
     const previous = this.prevFinalTarget ?? current;
 
-    this.bindTexture(0, this.sceneTarget!.tex);
+    const lowTexture = this.lowTexture();
+    this.bindTexture(0, lowTexture);
     this.bindTexture(1, current.tex);
     this.bindTexture(2, previous.tex);
-    this.bindTexture(3, this.sceneVelocity);
-    this.bindTexture(4, this.sceneTarget!.tex);
+    this.bindTexture(3, this.velocityTexture());
+    this.bindTexture(4, lowTexture);
 
     const u = this.displayProgram.uniforms;
     gl.uniform1i(u.get('tRaw') ?? null, 0);
