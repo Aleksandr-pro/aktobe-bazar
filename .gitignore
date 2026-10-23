@@ -34,3 +34,6 @@ yarn-error.log*
 
 # подпись v4 от apksigner (не нужна в репозитории)
 *.idsig
+
+__pycache__/
+*.pyc

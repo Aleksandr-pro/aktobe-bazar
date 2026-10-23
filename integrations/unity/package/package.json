@@ -1,0 +1,15 @@
+{
+  "name": "kz.bazar.fx",
+  "displayName": "BazarFX Neural Upscaler",
+  "version": "1.6.0",
+  "unity": "2021.3",
+  "description": "Нейросетевой апскейлер для Unity: renders the scene at low resolution and reconstructs it with a trained CNN running on the GPU (conv 3->8 -> 8->12 -> pixelshuffle x2), then applies Catmull-Rom + TAA + adaptive sharpen. Works in Built-in RP (BazarFXController) and URP (BazarFXNeuralFeature).",
+  "keywords": ["upscale", "neural", "dlss", "sr", "taa", "mobile", "performance"],
+  "author": {
+    "name": "BazarFX",
+    "url": "https://github.com/Aleksandr-pro/aktobe-bazar"
+  },
+  "documentationUrl": "https://github.com/Aleksandr-pro/aktobe-bazar/blob/main/integrations/unity/README.md",
+  "samples": [],
+  "dependencies": {}
+}

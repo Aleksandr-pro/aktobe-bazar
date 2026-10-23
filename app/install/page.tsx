@@ -135,6 +135,22 @@ export default function InstallPage() {
           </div>
         </section>
 
+        <section className="mt-8 rounded-2xl border border-sky-900/40 bg-sky-950/20 p-5">
+          <h2 className="text-sm font-semibold text-sky-300">Есть движок? Используй Unity-пакет</h2>
+          <p className="mt-2 text-xs leading-relaxed text-zinc-300">
+            Оверлей поверх экрана — это компромисс: задержка в кадр, блокировка скриншотов.
+            Если игра своя (или есть исходники), сеть можно встроить прямо в рендер:
+            сцена рисуется в низком разрешении, GPU восстанавливает кадр — без захвата,
+            без задержки, с реальной экономией на геометрии.
+          </p>
+          <a
+            href="/unity"
+            className="mt-3 inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700"
+          >
+            BazarFX для Unity →
+          </a>
+        </section>
+
         <section className="mt-8 rounded-2xl border border-emerald-900/40 bg-emerald-950/20 p-5">
           <h2 className="text-sm font-semibold text-emerald-300">Нейросетевой апскейл (как DLSS, только честный)</h2>
           <p className="mt-2 text-xs leading-relaxed text-zinc-300">
