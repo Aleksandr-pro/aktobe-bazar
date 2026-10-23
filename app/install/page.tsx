@@ -63,7 +63,7 @@ export default function InstallPage() {
         <div className="rounded-3xl border border-emerald-900/50 bg-gradient-to-b from-emerald-950/40 to-zinc-950 p-5 sm:p-8">
           <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-800/60 bg-emerald-950/60 px-3 py-1 text-[11px] text-emerald-300">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            версия 1.0 · Android 8+ · без root
+            версия 1.1 · Android 8+ · без root
           </div>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Скачать <span className="text-emerald-400">BazarFX.apk</span>
@@ -159,8 +159,11 @@ export default function InstallPage() {
             <ul className="space-y-1">
               <li>• Загрузка «зависла» на 100% → файл уже скачан: открой Chrome → ⋮ → «Загрузки». Если не открывается — качай по CDN-ссылке.</li>
               <li>• Чёрный экран → выключи «Исключать оверлей из захвата».</li>
+              <li>• Сбой при запуске тяжёлой игры — исправлено в 1.1 (повторный захват экрана после поворота). Ставь 1.1.</li>
               <li>• Не ставится → разреши установку из этого источника в настройках.</li>
               <li>• Лагает → уменьши «Разрешение сцены» и выключи генерацию кадров.</li>
+              <li>• Приложение вылетело → открой BazarFX и нажми <span className="font-semibold text-zinc-200">«Лог»</span> внизу: там весь ход работы. Кнопка «Отправить лог» пересылает текст мне.</li>
+              <li>• Игра с защитой от записи экрана (FLAG_SECURE) → BazarFX покажет предупреждение, картинку улучшить нельзя.</li>
               <li>• Исходники и сборка: <span className="font-mono text-zinc-300">integrations/android/</span></li>
             </ul>
           </div>

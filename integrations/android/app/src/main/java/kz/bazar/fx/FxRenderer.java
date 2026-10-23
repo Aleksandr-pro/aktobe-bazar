@@ -31,6 +31,12 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     public interface StatsListener {
         void onStats(float captureFps, float presentFps, int lowW, int lowH, int fullW, int fullH);
+
+        /** Непоправимая ошибка пайплайна — сервис должен аккуратно выключиться. */
+        void onError(String message);
+
+        /** Не критично для работы, но пользователю стоит знать (например, игра блокирует захват). */
+        void onWarning(String message);
     }
 
     private static final String VERT = ""
@@ -297,6 +303,20 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int presentFrames;
     private long statsWindowStart;
 
+    private volatile boolean failed;
+    private String lastError = "";
+    private long lastBlackCheckNanos;
+    private int consecutiveBlackFrames;
+    private boolean warnedAboutBlack;
+
+    public boolean isFailed() {
+        return failed;
+    }
+
+    public String getLastError() {
+        return lastError;
+    }
+
     public FxRenderer(FxSettings settings, StatsListener listener) {
         this.settings = settings;
         this.statsListener = listener;
@@ -311,23 +331,27 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return surfaceTexture;
     }
 
+    /**
+     * Смена размера (поворот, игра ушла в ландшафт). Важно: SurfaceTexture НЕ
+     * пересоздаётся — старый SurfaceTexture нельзя освобождать, пока на него
+     * пишет VirtualDisplay (это нативный краш). Достаточно поменять размер
+     * буфера и пересоздать FBO.
+     */
     public void onSurfaceSizeChanged(int width, int height) {
-        // Полное разрешение = размер оверлея/экрана
         if (width == fullW && height == fullH) return;
         fullW = Math.max(2, width);
         fullH = Math.max(2, height);
+        FxLog.i("Смена размера: " + fullW + "x" + fullH);
         if (view != null) {
             view.queueEvent(new Runnable() {
                 @Override
                 public void run() {
-                    destroyTargets();
-                }
-            });
-            view.queueEvent(new Runnable() {
-                @Override
-                public void run() {
-                    allocateTargets();
-                    createSurfaceTexture();
+                    try {
+                        allocateTargets();
+                        resizeSurfaceTexture();
+                    } catch (Throwable t) {
+                        fail("Не удалось пересоздать буферы: " + t, t);
+                    }
                 }
             });
         }
@@ -357,33 +381,36 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     @Override
     public void onSurfaceCreated(GL10 gl, EGLConfig config) {
-        GLES30.glDisable(GLES30.GL_DEPTH_TEST);
-        GLES30.glDisable(GLES30.GL_BLEND);
-        GLES30.glClearColor(0f, 0f, 0f, 1f);
+        try {
+            GLES30.glDisable(GLES30.GL_DEPTH_TEST);
+            GLES30.glDisable(GLES30.GL_BLEND);
+            GLES30.glClearColor(0f, 0f, 0f, 1f);
 
-        sampleProgram = buildProgram(VERT, FRAG_SAMPLE);
-        upscaleProgram = buildProgram(VERT, FRAG_UPSCALE);
-        temporalProgram = buildProgram(VERT, FRAG_TEMPORAL);
-        sharpenProgram = buildProgram(VERT, FRAG_SHARPEN);
-        flowProgram = buildProgram(VERT, FRAG_FLOW);
-        flowUpProgram = buildProgram(VERT, FRAG_FLOW_UP);
-        displayProgram = buildProgram(VERT, FRAG_DISPLAY);
+            sampleProgram = buildProgram(VERT, FRAG_SAMPLE);
+            upscaleProgram = buildProgram(VERT, FRAG_UPSCALE);
+            temporalProgram = buildProgram(VERT, FRAG_TEMPORAL);
+            sharpenProgram = buildProgram(VERT, FRAG_SHARPEN);
+            flowProgram = buildProgram(VERT, FRAG_FLOW);
+            flowUpProgram = buildProgram(VERT, FRAG_FLOW_UP);
+            displayProgram = buildProgram(VERT, FRAG_DISPLAY);
 
-        neutralTex = createTexture2D(1, 1, new byte[]{(byte) 128, (byte) 128, (byte) 128, (byte) 255});
-        historyValid = false;
-        hasPrevFrame = false;
-        allocateTargets();
-        createSurfaceTexture();
+            neutralTex = createTexture2D(1, 1, new byte[]{(byte) 128, (byte) 128, (byte) 128, (byte) 255});
+            historyValid = false;
+            hasPrevFrame = false;
+            allocateTargets();
+            ensureSurfaceTexture();
+            FxLog.i("GL готов: " + fullW + "x" + fullH + ", сцена " + lowW + "x" + lowH);
+        } catch (Throwable t) {
+            fail("Не удалось инициализировать OpenGL: " + t, t);
+        }
     }
 
-    private void createSurfaceTexture() {
+    /** Создаёт SurfaceTexture один раз за жизнь GL-контекста. */
+    private void ensureSurfaceTexture() {
         if (fullW <= 1) return;
         if (surfaceTexture != null) {
-            try {
-                surfaceTexture.release();
-            } catch (Throwable ignored) {
-                // VirtualDisplay мог ещё держать Surface — не критично
-            }
+            resizeSurfaceTexture();
+            return;
         }
         if (oesTexture == -1) {
             int[] t = new int[1];
@@ -395,31 +422,69 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE);
             GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE);
         }
-        surfaceTexture = new SurfaceTexture(oesTexture);
-        surfaceTexture.setDefaultBufferSize(fullW, fullH);
-        surfaceTexture.setOnFrameAvailableListener(this);
-        surfaceTextureId = oesTexture;
+        try {
+            surfaceTexture = new SurfaceTexture(oesTexture);
+            // Слушатель — на главный Looper: GL-поток без Looper может уронить SurfaceTexture
+            surfaceTexture.setOnFrameAvailableListener(this, new android.os.Handler(android.os.Looper.getMainLooper()));
+            surfaceTexture.setDefaultBufferSize(fullW, fullH);
+            surfaceTextureId = oesTexture;
+            FxLog.i("SurfaceTexture создан под " + fullW + "x" + fullH);
+        } catch (Throwable t) {
+            fail("Не удалось создать SurfaceTexture: " + t, t);
+            return;
+        }
         if (view != null) {
             view.setRenderMode(frameGen ? GLSurfaceView.RENDERMODE_CONTINUOUSLY : GLSurfaceView.RENDERMODE_WHEN_DIRTY);
         }
     }
 
+    /** Меняет только размер буфера — без release(), иначе VirtualDisplay пишет в освобождённый Surface. */
+    private void resizeSurfaceTexture() {
+        if (surfaceTexture == null) {
+            ensureSurfaceTexture();
+            return;
+        }
+        try {
+            surfaceTexture.setDefaultBufferSize(fullW, fullH);
+        } catch (Throwable t) {
+            FxLog.w("setDefaultBufferSize не удался: " + t);
+        }
+    }
+
     @Override
     public void onSurfaceChanged(GL10 gl, int width, int height) {
-        fullW = Math.max(2, width);
-        fullH = Math.max(2, height);
-        GLES30.glViewport(0, 0, fullW, fullH);
-        allocateTargets();
-        if (surfaceTexture == null) createSurfaceTexture();
+        try {
+            fullW = Math.max(2, width);
+            fullH = Math.max(2, height);
+            GLES30.glViewport(0, 0, fullW, fullH);
+            allocateTargets();
+            ensureSurfaceTexture();
+        } catch (Throwable t) {
+            fail("onSurfaceChanged: " + t, t);
+        }
     }
 
     @Override
     public void onDrawFrame(GL10 gl) {
-        if (surfaceTextureId == -1 || fullW <= 1) return;
+        if (failed || surfaceTextureId == -1 || fullW <= 1) return;
+        try {
+            drawFrameInternal();
+        } catch (Throwable t) {
+            fail("Ошибка отрисовки: " + t, t);
+        }
+    }
 
+    private void drawFrameInternal() {
         boolean newFrame = frameAvailable;
-        if (newFrame) {
-            surfaceTexture.updateTexImage();
+        if (newFrame && surfaceTexture != null) {
+            try {
+                surfaceTexture.updateTexImage();
+            } catch (Throwable t) {
+                // SurfaceTexture «осиротел» (VirtualDisplay пересоздан/остановлен)
+                FxLog.w("updateTexImage: " + t);
+                frameAvailable = false;
+                return;
+            }
             frameAvailable = false;
         }
 
@@ -448,7 +513,67 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             presentFrames++;
         }
 
+        if (newFrame) {
+            detectBlackCapture(now);
+        }
+
         reportStats(now);
+    }
+
+    /**
+     * Некоторые игры (и почти все античиты) ставят FLAG_SECURE — тогда
+     * MediaProjection отдаёт полностью чёрный кадр. Отличаем это от обычной
+     * тёмной сцены и сообщаем пользователю, иначе выглядит как «сломалось».
+     */
+    private void detectBlackCapture(long now) {
+        if (now - lastBlackCheckNanos < 1_500_000_000L) return;
+        lastBlackCheckNanos = now;
+        if (fullW <= 1 || finalTexA == 0) return;
+        try {
+            int[] fbo = new int[1];
+            GLES30.glGenFramebuffers(1, fbo, 0);
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[0]);
+            GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0,
+                    GLES30.GL_TEXTURE_2D, finalTexA, 0);
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocateDirect(16)
+                    .order(java.nio.ByteOrder.nativeOrder());
+            GLES30.glReadPixels(0, 0, 2, 2, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf);
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+            GLES30.glDeleteFramebuffers(1, fbo, 0);
+            int sum = 0;
+            for (int i = 0; i < 16; i++) {
+                sum += buf.get(i) & 0xFF;
+            }
+            if (sum < 24) {
+                consecutiveBlackFrames++;
+                if (consecutiveBlackFrames >= 2 && !warnedAboutBlack) {
+                    warnedAboutBlack = true;
+                    FxLog.w("Захват отдаёт чёрный кадр — вероятно, игра использует FLAG_SECURE");
+                    if (statsListener != null) {
+                        statsListener.onWarning(
+                                "Игра отдаёт чёрный кадр (защита от записи экрана). "
+                                        + "К этой игре технология примениться не может.");
+                    }
+                }
+            } else {
+                consecutiveBlackFrames = 0;
+            }
+        } catch (Throwable ignored) {
+            // диагностика не должна влиять на работу
+        }
+    }
+
+    private void fail(String message, Throwable error) {
+        if (failed) return;
+        failed = true;
+        lastError = message;
+        FxLog.e(message, error);
+        if (statsListener != null) {
+            try {
+                statsListener.onError(message);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Override
@@ -648,10 +773,13 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     public void release() {
+        failed = true; // дальше кадры не рисуем
         if (surfaceTexture != null) {
             try {
+                surfaceTexture.setOnFrameAvailableListener(null);
                 surfaceTexture.release();
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                FxLog.w("release SurfaceTexture: " + t);
             }
             surfaceTexture = null;
         }
@@ -720,15 +848,34 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private int compile(int type, String src) {
-        int s = GLES30.glCreateShader(type);
-        GLES30.glShaderSource(s, src);
-        GLES30.glCompileShader(s);
-        int[] ok = new int[1];
-        GLES30.glGetShaderiv(s, GLES30.GL_COMPILE_STATUS, ok, 0);
-        if (ok[0] == 0) {
-            throw new RuntimeException("BazarFX shader error: " + GLES30.glGetShaderInfoLog(s));
+        int shader = compileOnce(type, src);
+        if (shader != 0) return shader;
+
+        // На части драйверов расширение доступно только с понижением до `enable`.
+        if (src.contains("GL_OES_EGL_image_external_essl3 : require")) {
+            String relaxed = src.replace("GL_OES_EGL_image_external_essl3 : require",
+                    "GL_OES_EGL_image_external_essl3 : enable");
+            shader = compileOnce(type, relaxed);
+            if (shader != 0) {
+                FxLog.w("Шейдер собран с 'enable' вместо 'require' для OES-расширения");
+                return shader;
+            }
         }
-        return s;
+        throw new RuntimeException("BazarFX: не удалось собрать шейдер");
+    }
+
+    private int compileOnce(int type, String src) {
+        int shader = GLES30.glCreateShader(type);
+        GLES30.glShaderSource(shader, src);
+        GLES30.glCompileShader(shader);
+        int[] ok = new int[1];
+        GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, ok, 0);
+        if (ok[0] == 0) {
+            FxLog.e("Ошибка компиляции шейдера: " + GLES30.glGetShaderInfoLog(shader), null);
+            GLES30.glDeleteShader(shader);
+            return 0;
+        }
+        return shader;
     }
 
     private void reportStats(long now) {

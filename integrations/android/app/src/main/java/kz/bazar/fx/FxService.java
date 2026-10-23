@@ -68,6 +68,17 @@ public class FxService extends Service implements FxRenderer.StatsListener {
     @Override
     public void onCreate() {
         super.onCreate();
+        FxLog.init(this);
+        FxLog.i("Сервис создан, SDK " + Build.VERSION.SDK_INT);
+        FxLog.installCrashGuard(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    notifyFailure("BazarFX остановлен из-за ошибки. Подробности — в логе приложения.");
+                } catch (Throwable ignored) {
+                }
+            }
+        });
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         handler = new Handler(Looper.getMainLooper());
@@ -83,7 +94,13 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             return START_NOT_STICKY;
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification("BazarFX включён", "Обработка экрана активна"));
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification("BazarFX включён", "Обработка экрана активна"));
+        } catch (Throwable t) {
+            FxLog.e("startForeground: " + t, t);
+            stopSelf();
+            return START_NOT_STICKY;
+        }
 
         int code = intent.getIntExtra(EXTRA_CODE, 0);
         Intent data = intent.getParcelableExtra(EXTRA_DATA);
@@ -99,6 +116,16 @@ public class FxService extends Service implements FxRenderer.StatsListener {
     }
 
     private void startPipeline(int resultCode, Intent data) {
+        try {
+            startPipelineInternal(resultCode, data);
+        } catch (Throwable t) {
+            FxLog.e("startPipeline: " + t, t);
+            notifyFailure("Не удалось начать захват: " + t.getClass().getSimpleName());
+            stopSelf();
+        }
+    }
+
+    private void startPipelineInternal(int resultCode, Intent data) {
         MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         if (manager == null) {
             stopSelf();
@@ -154,7 +181,12 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                 if (!running || renderer == null) return;
                 SurfaceTexture current = renderer.getSurfaceTexture();
                 if (current != null && current != activeSurfaceTexture) {
-                    createVirtualDisplay();
+                    resizeVirtualDisplay();
+                }
+                if (renderer.isFailed()) {
+                    notifyFailure("Ошибка пайплайна: " + renderer.getLastError());
+                    stopSelf();
+                    return;
                 }
                 handler.postDelayed(this, 1500);
             }
@@ -312,30 +344,83 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         bubble.setBackgroundColor(bypass ? 0xB34A1D1D : 0xB3123F33);
     }
 
+    /**
+     * VirtualDisplay создаётся РОВНО ОДИН раз на токен MediaProjection.
+     * Начиная с Android 14 повторный createVirtualDisplay с тем же токеном
+     * бросает SecurityException и роняет приложение — именно это происходило
+     * при запуске игры (смена ориентации/разрешения).
+     * Дальше размер меняем через resize(), а поверхность — через setSurface().
+     */
     private void createVirtualDisplay() {
+        if (virtualDisplay != null) {
+            resizeVirtualDisplay();
+            return;
+        }
+        if (renderer == null || projection == null) return;
+
         DisplayMetrics metrics = currentMetrics();
-        releaseVirtualDisplay();
-
-        if (renderer == null) return;
         SurfaceTexture st = renderer.getSurfaceTexture();
-        if (st == null) return;
-        st.setDefaultBufferSize(metrics.widthPixels, metrics.heightPixels);
-        captureSurface = new Surface(st);
-        activeSurfaceTexture = st;
+        if (st == null) {
+            FxLog.w("SurfaceTexture ещё не готов — повторю попытку");
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    createVirtualDisplay();
+                }
+            }, 100);
+            return;
+        }
 
-        if (projection == null) return;
-        virtualDisplay = projection.createVirtualDisplay(
-                "BazarFX",
-                metrics.widthPixels,
-                metrics.heightPixels,
-                Math.max(1, metrics.densityDpi),
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
-                        | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
-                captureSurface,
-                null,
-                handler);
+        try {
+            captureSurface = new Surface(st);
+            activeSurfaceTexture = st;
+            virtualDisplay = projection.createVirtualDisplay(
+                    "BazarFX",
+                    metrics.widthPixels,
+                    metrics.heightPixels,
+                    Math.max(1, metrics.densityDpi),
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
+                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+                    captureSurface,
+                    null,
+                    handler);
+            renderer.onSurfaceSizeChanged(metrics.widthPixels, metrics.heightPixels);
+            FxLog.i("VirtualDisplay создан: " + metrics.widthPixels + "x" + metrics.heightPixels);
+        } catch (Throwable t) {
+            // SecurityException (повторный захват), IllegalStateException (проекция остановлена)
+            FxLog.e("Не удалось создать VirtualDisplay: " + t, t);
+            notifyFailure("Захват экрана недоступен: " + t.getClass().getSimpleName()
+                    + ". Выключите и включите BazarFX заново.");
+            stopSelf();
+        }
+    }
 
-        renderer.onSurfaceSizeChanged(metrics.widthPixels, metrics.heightPixels);
+    /** Поворот / смена разрешения: только resize, без пересоздания. */
+    private void resizeVirtualDisplay() {
+        if (virtualDisplay == null) {
+            createVirtualDisplay();
+            return;
+        }
+        DisplayMetrics metrics = currentMetrics();
+        try {
+            virtualDisplay.resize(metrics.widthPixels, metrics.heightPixels, Math.max(1, metrics.densityDpi));
+            if (renderer != null) {
+                SurfaceTexture st = renderer.getSurfaceTexture();
+                if (st != null && st != activeSurfaceTexture) {
+                    // GL-контекст пересоздался — переключаем вывод на новый Surface
+                    if (captureSurface != null) {
+                        captureSurface.release();
+                    }
+                    captureSurface = new Surface(st);
+                    activeSurfaceTexture = st;
+                    virtualDisplay.setSurface(captureSurface);
+                }
+                renderer.onSurfaceSizeChanged(metrics.widthPixels, metrics.heightPixels);
+            }
+            FxLog.i("VirtualDisplay resize: " + metrics.widthPixels + "x" + metrics.heightPixels);
+        } catch (Throwable t) {
+            FxLog.e("resize VirtualDisplay: " + t, t);
+        }
     }
 
     private void releaseVirtualDisplay() {
@@ -362,22 +447,17 @@ public class FxService extends Service implements FxRenderer.StatsListener {
     @Override
     public void onConfigurationChanged(android.content.res.Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        // Поворот экрана — пересоздаём VirtualDisplay под новый размер
+        // Поворот экрана: уменьшаем/увеличиваем существующий VirtualDisplay.
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                if (renderer != null) {
-                    DisplayMetrics metrics = currentMetrics();
-                    renderer.onSurfaceSizeChanged(metrics.widthPixels, metrics.heightPixels);
-                    handler.postDelayed(new Runnable() {
-                        @Override
-                        public void run() {
-                            createVirtualDisplay();
-                        }
-                    }, 120);
+                try {
+                    resizeVirtualDisplay();
+                } catch (Throwable t) {
+                    FxLog.e("Поворот экрана: " + t, t);
                 }
             }
-        }, 300);
+        }, 400);
     }
 
     @Override
@@ -393,6 +473,60 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                     }
                 }
             });
+        }
+    }
+
+    @Override
+    public void onError(String message) {
+        FxLog.e("Пайплайн: " + message, null);
+        notifyFailure(message);
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (bubble != null) {
+                    bubble.setText("ERR");
+                    bubble.setBackgroundColor(0xB37F1D1D);
+                }
+            }
+        });
+    }
+
+    @Override
+    public void onWarning(String message) {
+        FxLog.w(message);
+        try {
+            android.widget.Toast.makeText(getApplicationContext(), message, android.widget.Toast.LENGTH_LONG).show();
+        } catch (Throwable ignored) {
+        }
+        updateNotification(message);
+    }
+
+    private void notifyFailure(String message) {
+        try {
+            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(
+                        "bazarfx_errors", "Ошибки BazarFX", NotificationManager.IMPORTANCE_HIGH);
+                manager.createNotificationChannel(channel);
+            }
+            Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? new Notification.Builder(this, "bazarfx_errors")
+                    : new Notification.Builder(this);
+            Intent open = new Intent(this, MainActivity.class);
+            PendingIntent pending = PendingIntent.getActivity(this, 3, open,
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                            ? PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
+                            : PendingIntent.FLAG_UPDATE_CURRENT);
+            manager.notify(43, builder
+                    .setContentTitle("BazarFX: ошибка")
+                    .setContentText(message)
+                    .setStyle(new Notification.BigTextStyle().bigText(message))
+                    .setSmallIcon(android.R.drawable.stat_notify_error)
+                    .setContentIntent(pending)
+                    .setAutoCancel(true)
+                    .build());
+        } catch (Throwable t) {
+            FxLog.e("notifyFailure: " + t, t);
         }
     }
 
