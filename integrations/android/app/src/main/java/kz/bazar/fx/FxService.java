@@ -215,6 +215,16 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             FxLog.e("registerCallback: " + t, t);
         }
 
+        // Если уведомления запрещены, кнопок управления не будет вообще —
+        // значит кружок обязателен, иначе приложение не выключить.
+        try {
+            if (notificationManager != null && !notificationManager.areNotificationsEnabled()) {
+                FxLog.w("Уведомления запрещены — принудительно показываю кружок FX");
+                settings.showBubble = true;
+            }
+        } catch (Throwable ignored) {
+        }
+
         FxLog.i("Шаг 2/4: показываем оверлей");
         try {
             showOverlay();
@@ -333,11 +343,13 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         bubble.setTextColor(Color.WHITE);
         bubble.setTextSize(14f);
         bubble.setGravity(Gravity.CENTER);
-        bubble.setBackgroundColor(0xB3123F33);
-        bubble.setPadding(24, 16, 24, 16);
+        bubble.setBackgroundColor(0xE0123F33);
+        bubble.setPadding(28, 18, 28, 18);
+        bubble.setTextSize(15f);
+        bubble.setAlpha(0.92f);
 
         bubbleParams = new WindowManager.LayoutParams(
-                120,
+                Math.round(56 * getResources().getDisplayMetrics().density),
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
@@ -516,6 +528,20 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         });
         panel.addView(hideItem);
 
+        TextView quit = new TextView(this);
+        quit.setText("✕ Выключить BazarFX полностью");
+        quit.setTextColor(0xFFF87171);
+        quit.setTextSize(12f);
+        quit.setPadding(0, pad, 0, 0);
+        quit.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideQualityPanel();
+                stopSelf();
+            }
+        });
+        panel.addView(quit);
+
         TextView off = new TextView(this);
         off.setText("Скрыть панель");
         off.setTextColor(0xFF71717A);
@@ -614,7 +640,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
 
     /** Переключение пресета на ходу (кнопка в уведомлении и меню на кружке). */
     private void cycleQuality(int direction) {
-        int n = 5; // только 5 основных пресетов, CUSTOM сюда не попадает
+        int n = FxSettings.QUALITY_NAMES.length - 1; // без CUSTOM
         int next = (settings.quality + direction) % n;
         if (next < 0) next += n;
         setQuality(next);

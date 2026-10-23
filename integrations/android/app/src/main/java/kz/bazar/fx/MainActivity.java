@@ -219,6 +219,24 @@ public class MainActivity extends Activity {
                     }
                 }));
 
+        addSlider(root, "Сила нейросети (AI)", 0, 100, "neuralStrength", "%",
+                "0% — чистая математика (Catmull-Rom), 100% — полностью результат сети. "
+                        + "Промежуточные значения смешивают их и дают мягкий переход без артефактов.");
+
+        root.addView(checkbox("Нейросетевой апскейл (AI)",
+                "Полноценная свёрточная сеть на GPU: восстанавливает детали из кадра "
+                        + "низкого разрешения (3→8→12 каналов). Медленнее обычных шейдеров — "
+                        + "на слабом устройстве включи «Авто-качество».",
+                settings.neural,
+                new OnChecked() {
+                    @Override
+                    public void onChecked(boolean checked) {
+                        settings.neural = checked;
+                        settings.save(MainActivity.this);
+                        pushToService();
+                    }
+                }));
+
         root.addView(checkbox("Авто-качество",
                 "Если устройство не успевает, BazarFX сам снижает масштаб сцены, "
                         + "чтобы картинка оставалась плавной. Лучше оставить включённым.",
@@ -349,6 +367,21 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_NOTIFICATIONS) {
+            boolean granted = grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            if (!granted) {
+                Toast.makeText(this, "Без уведомлений управлять можно только кружком FX",
+                        Toast.LENGTH_LONG).show();
+                settings.showBubble = true;
+                settings.save(this);
+            }
+        }
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         // Настройки могли поменять из оверлея (меню на кружке) — подхватываем.
@@ -371,7 +404,7 @@ public class MainActivity extends Activity {
     private void updateStatusText() {
         if (status == null) return;
         boolean overlay = Settings.canDrawOverlays(this);
-        status.setText("Версия 1.5 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
+        status.setText("Версия 1.6 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
                 + "\nРазрешение «поверх других приложений»: " + (overlay ? "есть" : "нет")
                 + "\nКачество: " + settings.qualityName()
                 + " · сцена " + Math.round(settings.renderScale * 100) + "%"
@@ -390,6 +423,10 @@ public class MainActivity extends Activity {
         tv.setTextSize(11f);
         tv.setPadding(0, dp(28), 0, dp(10));
         return tv;
+    }
+
+    private interface OnValue {
+        void onValue(int value);
     }
 
     private interface OnChecked {
@@ -446,6 +483,7 @@ public class MainActivity extends Activity {
     }
 
     private float getValue(String key) {
+        if ("neuralStrength".equals(key)) return settings.neuralStrength;
         if ("renderScale".equals(key)) return settings.renderScale;
         if ("sharpen".equals(key)) return settings.sharpen;
         if ("clarity".equals(key)) return settings.clarity;
@@ -453,6 +491,11 @@ public class MainActivity extends Activity {
     }
 
     private void setValue(String key, float value) {
+        if ("neuralStrength".equals(key)) {
+            settings.neuralStrength = value;
+            settings.neural = value > 0.01f;
+            return;
+        }
         if ("renderScale".equals(key)) settings.renderScale = Math.max(0.3f, value);
         else if ("sharpen".equals(key)) settings.sharpen = value;
         else if ("clarity".equals(key)) settings.clarity = value;
@@ -472,7 +515,7 @@ public class MainActivity extends Activity {
     private void rebuildPresets() {
         if (presetBox == null) return;
         presetBox.removeAllViews();
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < FxSettings.QUALITY_NAMES.length - 1; i++) {
             final int preset = i;
             boolean active = settings.quality == preset;
             LinearLayout row = new LinearLayout(this);
@@ -533,7 +576,8 @@ public class MainActivity extends Activity {
             int min = "renderScale".equals(key) ? 30 : 0;
             SeekBar bar = seekBars.get(i);
             bar.setProgress(Math.max(0, Math.min(bar.getMax(), percent - min)));
-            String label = "renderScale".equals(key) ? "Разрешение сцены"
+            String label = "neuralStrength".equals(key) ? "Сила нейросети (AI)"
+                    : "renderScale".equals(key) ? "Разрешение сцены"
                     : "sharpen".equals(key) ? "Резкость (шарпенинг)"
                     : "clarity".equals(key) ? "Локальный контраст (clarity)"
                     : "Тон и антибандинг (grade)";

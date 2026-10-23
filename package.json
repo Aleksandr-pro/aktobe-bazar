@@ -11,7 +11,9 @@
     "check:types": "tsc --noEmit",
     "check:engine": "node scripts/check-engine.mjs",
     "check:apk": "python3 integrations/android/tools/check_apk.py integrations/android/BazarFX.apk",
-    "check:shaders:android": "node scripts/check-shaders-android.mjs"
+    "check:shaders:android": "node scripts/check-shaders-android.mjs",
+    "check:neural": "python3 scripts/check_sr_weights.py",
+    "train:neural": "python3 scripts/train_sr.py"
   },
   "dependencies": {
     "autoprefixer": "^10.6.1",
