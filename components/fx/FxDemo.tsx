@@ -373,8 +373,7 @@ export default function FxDemo() {
           </a>
           <nav className="flex items-center gap-3 text-sm text-zinc-400">
             <a
-              href="/BazarFX.apk"
-              download
+              href="/install"
               className="rounded-xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-900/40"
             >
               Скачать APK
