@@ -22,4 +22,4 @@
 `integrations/unity/` (шейдер + компонент для Unity),
 описание — [docs/BAZARFX.md](docs/BAZARFX.md).
 
-**Проверки:** `npm run check:types`, `npm run check:shaders`.
+**Проверки:** `npm run check:types`, `npm run check:shaders`, `npm run check:engine`.

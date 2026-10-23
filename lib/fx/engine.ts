@@ -942,7 +942,9 @@ export class BazarFX {
       this.videoTexture = createTexture(gl, 1, 1, gl.LINEAR, gl.CLAMP_TO_EDGE);
     }
     gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    // Наш vUV имеет v=0 внизу экрана, поэтому текстуру видео нужно
+    // перевернуть по Y при загрузке (по умолчанию так и есть — фиксируем явно).
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     try {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
     } catch {

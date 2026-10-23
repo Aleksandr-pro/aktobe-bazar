@@ -178,6 +178,16 @@ export default function FxDemo() {
     engineRef.current?.setOptions({ ...options, split: splitOn ? options.split : -1 });
   }, [options, splitOn]);
 
+  // ---------- service worker (только в прод-сборке) ----------
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'production') return;
+    if (!('serviceWorker' in navigator)) return;
+    const timer = setTimeout(() => {
+      navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
+
   // ---------- PWA install prompt ----------
   useEffect(() => {
     const onPrompt = (e: Event) => {
