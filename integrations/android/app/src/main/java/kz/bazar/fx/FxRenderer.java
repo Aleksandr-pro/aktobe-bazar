@@ -368,6 +368,8 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             flowFbo, flowTex, flowUpFbo, flowUpTex, neutralTex;
 
     private int lowW = 1, lowH = 1, fullW = 1, fullH = 1;
+    /** Сцена уже в полном разрешении: апскейл не нужен, а low-буфер работает как пробник. */
+    private boolean directMode;
     private int flowGridW = 1, flowGridH = 1;
 
     private boolean historyValid;
@@ -385,6 +387,11 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int captureFrames;
     private int presentFrames;
     private long statsWindowStart;
+
+    private volatile boolean glReady;      // контекст создан, можно аллоцировать
+    private volatile boolean targetsReady; // FBO выделены и рабочие
+    private volatile int desiredW, desiredH; // размер, запрошенный сервисом
+    private int drawErrors;
 
     private volatile boolean failed;
     private volatile String lastError = "";
@@ -438,7 +445,8 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     try {
                         allocateTargets();
                     } catch (Throwable t) {
-                        fail("Не удалось применить настройки: " + t, t);
+                        targetsReady = false;
+                        FxLog.e("Не удалось применить настройки: " + t, t);
                     }
                     view.requestRender();
                 }
@@ -461,22 +469,46 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
      * буфера и пересоздать FBO.
      */
     public void onSurfaceSizeChanged(int width, int height) {
-        if (width == fullW && height == fullH) return;
-        fullW = Math.max(2, width);
-        fullH = Math.max(2, height);
+        desiredW = Math.max(2, width);
+        desiredH = Math.max(2, height);
+        if (desiredW == fullW && desiredH == fullH && targetsReady) return;
+        if (!glReady) {
+            // Сервис сообщает размер сразу после addView(), когда GL-поток ещё не
+            // создал контекст. Раньше мы в этот момент лезли в GL и получали
+            // «Framebuffer неполный: 0x0», после чего рендерер навсегда помечался
+            // сломанным. Теперь просто запоминаем размер — применим в onSurfaceCreated.
+            FxLog.i("Размер " + desiredW + "x" + desiredH + " запомнен (GL ещё не готов)");
+            return;
+        }
+        applySize(desiredW, desiredH);
+    }
+
+    /** Применяет размер уже на GL-потоке. */
+    private void applySize(final int width, final int height) {
+        if (view == null) return;
+        view.queueEvent(new Runnable() {
+            @Override
+            public void run() {
+                setSizeOnGl(width, height);
+            }
+        });
+    }
+
+    /** Только из GL-потока. */
+    private void setSizeOnGl(int width, int height) {
+        if (!glReady) return;
+        if (width == fullW && height == fullH && targetsReady) return;
+        fullW = width;
+        fullH = height;
         FxLog.i("Смена размера: " + fullW + "x" + fullH);
-        if (view != null) {
-            view.queueEvent(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        allocateTargets();
-                        resizeSurfaceTexture();
-                    } catch (Throwable t) {
-                        fail("Не удалось пересоздать буферы: " + t, t);
-                    }
-                }
-            });
+        try {
+            allocateTargets();
+            resizeSurfaceTexture();
+        } catch (Throwable t) {
+            // Транзиентная ошибка (например, нехватка памяти под буферы) не должна
+            // убивать пайплайн: помечаем буферы неготовыми и повторим на следующем кадре.
+            targetsReady = false;
+            FxLog.e("Не удалось выделить буферы " + width + "x" + height + ": " + t, t);
         }
     }
 
@@ -527,6 +559,11 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             neutralTex = createTexture2D(1, 1, new byte[]{(byte) 128, (byte) 128, (byte) 128, (byte) 255});
             historyValid = false;
             hasPrevFrame = false;
+            glReady = true;
+            if (desiredW > 1 && (desiredW != fullW || desiredH != fullH)) {
+                fullW = desiredW;
+                fullH = desiredH;
+            }
             allocateTargets();
             ensureSurfaceTexture();
             FxLog.i("GL готов: " + GLES30.glGetString(GLES30.GL_VERSION)
@@ -586,23 +623,50 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     @Override
     public void onSurfaceChanged(GL10 gl, int width, int height) {
         try {
-            fullW = Math.max(2, width);
-            fullH = Math.max(2, height);
+            // Размер оверлея может отличаться от размера экрана (вырез, панель
+            // навигации). Источник истины — сервис: он задаёт размер захвата.
+            if (desiredW <= 1) {
+                fullW = Math.max(2, width);
+                fullH = Math.max(2, height);
+            } else if (Math.abs(width - fullW) > 4 || Math.abs(height - fullH) > 4) {
+                FxLog.i("Поверхность оверлея " + width + "x" + height
+                        + ", рендерим в " + fullW + "x" + fullH);
+            }
             GLES30.glViewport(0, 0, fullW, fullH);
             allocateTargets();
             ensureSurfaceTexture();
         } catch (Throwable t) {
-            fail("onSurfaceChanged: " + t, t);
+            targetsReady = false;
+            FxLog.e("onSurfaceChanged: " + t, t);
         }
     }
 
     @Override
     public void onDrawFrame(GL10 gl) {
         if (failed || surfaceTextureId == -1 || fullW <= 1) return;
+        if (!targetsReady) {
+            // Повторяем выделение буферов, пока не получится (например, игра
+            // временно заняла всю видеопамять).
+            try {
+                allocateTargets();
+            } catch (Throwable t) {
+                targetsReady = false;
+                if (drawErrors++ % 120 == 0) {
+                    FxLog.e("Буферы всё ещё не готовы: " + t, null);
+                }
+                return;
+            }
+        }
         try {
             drawFrameInternal();
+            drawErrors = 0;
         } catch (Throwable t) {
-            fail("Ошибка отрисовки: " + t, t);
+            // Одиночный сбой кадра — не повод выключать всю технологию.
+            if (++drawErrors >= 30) {
+                fail("Ошибка отрисовки: " + t, t);
+            } else {
+                FxLog.w("Сбой кадра (" + drawErrors + "): " + t);
+            }
         }
     }
 
@@ -722,19 +786,26 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // ------------------------------------------------------------- pipeline
 
     private void renderPipeline() {
-        // 1. снимаем OES-кадр в lowRes
+        // 1. мелкий пробник нужен только для проверки «чёрного захвата» и потока
         runSampleTo(lowFbo, lowW, lowH);
 
-        // 2. Catmull-Rom апскейл до полного разрешения
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, upFbo);
-        GLES30.glViewport(0, 0, fullW, fullH);
-        GLES30.glUseProgram(upscaleProgram);
-        bindTex(0, lowTex);
-        uniform1i(upscaleProgram, "tLow", 0);
-        uniform2f(upscaleProgram, "uLowRes", lowW, lowH);
-        draw();
-
-        int stage = upTex;
+        int stage;
+        if (directMode) {
+            // Сцена уже в полном разрешении (пресет «Реализм»): апскейлить нечего,
+            // снимаем кадр сразу в 1:1. Экономит буфер и целый проход.
+            runSampleTo(upFbo, fullW, fullH);
+            stage = upTex;
+        } else {
+            // 2. Catmull-Rom апскейл до полного разрешения
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, upFbo);
+            GLES30.glViewport(0, 0, fullW, fullH);
+            GLES30.glUseProgram(upscaleProgram);
+            bindTex(0, lowTex);
+            uniform1i(upscaleProgram, "tLow", 0);
+            uniform2f(upscaleProgram, "uLowRes", lowW, lowH);
+            draw();
+            stage = upTex;
+        }
 
         // 3. временное накопление
         if (cfgTemporal && histTexA != 0 && histTexB != 0) {
@@ -890,7 +961,10 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES30.glViewport(0, 0, fullW, fullH);
         GLES30.glUseProgram(displayProgram);
         int curTex = frameSlot == 0 ? frameTexA : frameTexB; // только что записанный
+        // Второго буфера может не быть (без генерации кадров) — тогда подставляем
+        // текущий: привязка текстуры 0 к юниту дала бы неполную текстуру и чёрный кадр.
         int prevTex = frameSlot == 0 ? frameTexB : frameTexA;
+        if (prevTex == 0) prevTex = curTex;
         bindTex(0, curTex);
         bindTex(1, prevTex);
         bindTex(2, frameGen && flowTex != 0 ? flowUpTex : neutralTex);
@@ -907,19 +981,34 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void allocateTargets() {
         if (fullW <= 1) return;
         float scale = clamp(cfgScale, 0.3f, 1f);
-        int newLowW = Math.max(64, Math.round(fullW * scale));
-        int newLowH = Math.max(36, Math.round(fullH * scale));
+        boolean newDirect = scale >= 0.995f && !cfgFrameGen;
+        int newLowW;
+        int newLowH;
+        if (newDirect) {
+            // В полном разрешении low-буфер нужен только как пробник для
+            // диагностики — держим его маленьким, экономим видеопамять.
+            newLowW = Math.max(64, Math.min(320, fullW / 4));
+            newLowH = Math.max(36, Math.min(320, fullH / 4));
+        } else {
+            newLowW = Math.max(64, Math.round(fullW * scale));
+            newLowH = Math.max(36, Math.round(fullH * scale));
+        }
         int newGridW = Math.max(8, newLowW / Math.max(2, (int) cfgFlowStep));
         int newGridH = Math.max(8, newLowH / Math.max(2, (int) cfgFlowStep));
 
+        boolean needScratch = cfgClarity > 0.001f || cfgGrade > 0.001f;
         boolean sizeSame = (newLowW == lowW && newLowH == lowH
                 && newGridW == flowGridW && newGridH == flowGridH);
         boolean temporalSame = cfgTemporal == (histTexA != 0);
         boolean frameGenSame = cfgFrameGen == (prevLowTex != 0);
-        if (sizeSame && temporalSame && frameGenSame && frameTexA != 0) {
+        boolean scratchSame = needScratch == (scratchTex != 0);
+        boolean directSame = newDirect == directMode;
+        if (sizeSame && temporalSame && frameGenSame && scratchSame && directSame && frameTexA != 0) {
+            targetsReady = true;
             return; // ничего не поменялось — не дёргаем GPU
         }
 
+        directMode = newDirect;
         lowW = newLowW;
         lowH = newLowH;
         flowGridW = newGridW;
@@ -933,13 +1022,18 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         upTex = createTexture2D(fullW, fullH, null);
         upFbo = createFbo(upTex);
 
-        scratchTex = createTexture2D(fullW, fullH, null);
-        scratchFbo = createFbo(scratchTex);
+        if (needScratch) {
+            scratchTex = createTexture2D(fullW, fullH, null);
+            scratchFbo = createFbo(scratchTex);
+        }
 
         frameTexA = createTexture2D(fullW, fullH, null);
         frameFboA = createFbo(frameTexA);
-        frameTexB = createTexture2D(fullW, fullH, null);
-        frameFboB = createFbo(frameTexB);
+        if (cfgFrameGen) {
+            // предыдущий кадр нужен только для интерполяции
+            frameTexB = createTexture2D(fullW, fullH, null);
+            frameFboB = createFbo(frameTexB);
+        }
 
         if (cfgTemporal) {
             histTexA = createTexture2D(fullW, fullH, null);
@@ -961,14 +1055,18 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         historyValid = false;
         hasPrevFrame = false;
 
-        int texCount = 4 + (cfgTemporal ? 2 : 0) + (cfgFrameGen ? 3 : 0) + 1;
+        int texCount = 2 + (needScratch ? 1 : 0) + (cfgFrameGen ? 2 : 0)
+                + (cfgTemporal ? 2 : 0);
         long mb = (long) texCount * fullW * fullH * 4L / (1024 * 1024);
         int err = GLES30.glGetError();
-        FxLog.i("Буферы: " + fullW + "x" + fullH + " → сцена " + lowW + "x" + lowH
+        FxLog.i("Буферы: " + fullW + "x" + fullH + (directMode
+                        ? " → без апскейла (1:1)" : " → сцена " + lowW + "x" + lowH)
                 + ", ~" + mb + " МБ видеопамяти" + (err != 0 ? ", glError=" + err : ""));
+        targetsReady = err == 0;
     }
 
     private void destroyTargets() {
+        targetsReady = false;
         int[] textures = {lowTex, prevLowTex, upTex, scratchTex, histTexA, histTexB,
                 frameTexA, frameTexB, flowTex, flowUpTex};
         int[] framebuffers = {lowFbo, prevLowFbo, upFbo, scratchFbo, histFboA, histFboB,
@@ -1116,7 +1214,8 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         presentFrames = 0;
         statsWindowStart = now;
         if (statsListener != null) {
-            statsListener.onStats(captureFps, presentFps, lowW, lowH, fullW, fullH);
+            statsListener.onStats(captureFps, presentFps,
+                    directMode ? fullW : lowW, directMode ? fullH : lowH, fullW, fullH);
         }
     }
 

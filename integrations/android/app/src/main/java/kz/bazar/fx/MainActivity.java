@@ -340,7 +340,7 @@ public class MainActivity extends Activity {
     private void updateStatusText() {
         if (status == null) return;
         boolean overlay = Settings.canDrawOverlays(this);
-        status.setText("Версия 1.3 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
+        status.setText("Версия 1.3.1 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
                 + "\nРазрешение «поверх других приложений»: " + (overlay ? "есть" : "нет")
                 + "\nКачество: " + settings.qualityName()
                 + " · сцена " + Math.round(settings.renderScale * 100) + "%"
