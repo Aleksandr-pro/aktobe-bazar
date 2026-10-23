@@ -10,7 +10,7 @@ GUID детерминированные (md5 от пути), поэтому пе
 и Unity не считает ассеты новыми.
 
 Запуск: python3 scripts/make_unitypackage.py
-Выход: public/BazarFX-Neural.unitypackage
+Выход: integrations/unity/BazarFX-Neural.unitypackage (+ копия в public/)
 """
 
 import gzip
@@ -22,7 +22,10 @@ import time
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = os.path.join(ROOT, "integrations", "unity", "package")
-OUT = os.path.join(ROOT, "public", "BazarFX-Neural.unitypackage")
+# Артефакт кладём рядом с исходниками (как APK — в integrations/android/),
+# а копию — в public/, чтобы он был доступен и со страницы сайта.
+OUT = os.path.join(ROOT, "integrations", "unity", "BazarFX-Neural.unitypackage")
+PUBLIC_COPY = os.path.join(ROOT, "public", "BazarFX-Neural.unitypackage")
 
 ASSET_PREFIX = "Assets/BazarFX"
 
@@ -89,6 +92,10 @@ def main():
 
     with gzip.GzipFile(OUT, "wb", mtime=1700000000) as gz:
         gz.write(raw.getvalue())
+
+    os.makedirs(os.path.dirname(PUBLIC_COPY), exist_ok=True)
+    with open(OUT, "rb") as src, open(PUBLIC_COPY, "wb") as dst:
+        dst.write(src.read())
 
     print(f"собрано: {OUT} ({os.path.getsize(OUT)} байт), файлов: {len(files)}")
     for _src, pathname in files:

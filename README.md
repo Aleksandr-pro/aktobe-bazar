@@ -39,3 +39,28 @@
 - **Unity-пакет (1.6)** — `/unity`: сеть внутри рендера, реальная экономия пикселей и FPS.
 
 Подробнее: [`docs/BAZARFX_ROADMAP.md`](docs/BAZARFX_ROADMAP.md).
+
+## Прямые ссылки на файлы (всегда из репозитория)
+
+Правило проекта: в ответах и документации сначала даём **прямые ссылки на файлы
+в этом репозитории**, а сайт и CDN — только как запасные варианты.
+
+| Что | Прямое скачивание | CDN (если GitHub зависает) |
+| --- | --- | --- |
+| Android APK 1.6 | https://github.com/Aleksandr-pro/aktobe-bazar/raw/apk-1.6/integrations/android/BazarFX.apk | https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.6/integrations/android/BazarFX.apk |
+| Unity-пакет 1.6 | https://github.com/Aleksandr-pro/aktobe-bazar/raw/unity-1.6/integrations/unity/BazarFX-Neural.unitypackage | https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@unity-1.6/integrations/unity/BazarFX-Neural.unitypackage |
+
+Версии фиксируются тегами (`apk-1.6`, `unity-1.6`), поэтому ссылки не меняются
+после следующих релизов. Артефакты лежат рядом с исходниками:
+`integrations/android/BazarFX.apk` и `integrations/unity/BazarFX-Neural.unitypackage`.
+
+Загрузка вложений в GitHub Releases недоступна (uploads.github.com блокируется),
+поэтому файлы в репозитории, а не в Assets релиза.
+
+Проверка целостности:
+
+```bash
+sha256sum integrations/android/BazarFX.apk integrations/unity/BazarFX-Neural.unitypackage
+# 6bd2417309604e8bbe637078d3a2d5463249f4869d74338b0cb886badd994cac  BazarFX.apk
+# 932dbfcacba3ef599f14812c46a5e2df502c676c10eb96e96dcf8ea30af8466e  BazarFX-Neural.unitypackage
+```

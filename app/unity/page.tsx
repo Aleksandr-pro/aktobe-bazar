@@ -8,8 +8,12 @@ export const metadata: Metadata = {
     'Пакет Unity с обученной нейросетью апскейла: сцена рендерится в низком разрешении, GPU восстанавливает кадр. Built-in RP и URP.',
 };
 
-const CDN_PACKAGE =
-  'https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.6/integrations/unity/BazarFX-Neural.unitypackage';
+const REPO = 'https://github.com/Aleksandr-pro/aktobe-bazar';
+const REPO_TAG = 'unity-1.6';
+const PACKAGE_PATH = 'integrations/unity/BazarFX-Neural.unitypackage';
+const RAW_PACKAGE = `${REPO}/raw/${REPO_TAG}/${PACKAGE_PATH}`;
+const CDN_PACKAGE = `https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@${REPO_TAG}/${PACKAGE_PATH}`;
+const PACKAGE_PAGE = `${REPO}/blob/${REPO_TAG}/${PACKAGE_PATH}`;
 
 function packageSize() {
   const file = path.join(process.cwd(), 'public', 'BazarFX-Neural.unitypackage');
@@ -56,8 +60,7 @@ export default function UnityPage() {
 
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
           <a
-            href="/BazarFX-Neural.unitypackage"
-            download="BazarFX-Neural.unitypackage"
+            href={RAW_PACKAGE}
             className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 py-4 text-base font-semibold text-white transition-colors hover:bg-emerald-700"
           >
             <span className="text-xl leading-none">↓</span>
@@ -69,6 +72,25 @@ export default function UnityPage() {
           >
             CDN-зеркало
           </a>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-[11px] leading-relaxed text-zinc-500">
+          Файл лежит в репозитории, тег <span className="font-mono text-zinc-400">{REPO_TAG}</span>:
+          <br />•{' '}
+          <a href={RAW_PACKAGE} className="break-all text-emerald-400 underline decoration-emerald-800">
+            github.com/Aleksandr-pro/aktobe-bazar/raw/{REPO_TAG}/{PACKAGE_PATH}
+          </a>{' '}
+          — прямое скачивание
+          <br />•{' '}
+          <a href={CDN_PACKAGE} className="break-all text-zinc-300 underline decoration-zinc-700">
+            cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@{REPO_TAG}/...
+          </a>{' '}
+          — CDN
+          <br />•{' '}
+          <a href={PACKAGE_PAGE} className="break-all text-zinc-300 underline decoration-zinc-700">
+            github.com/.../blob/{REPO_TAG}/{PACKAGE_PATH}
+          </a>{' '}
+          — страница файла
         </div>
 
         <section className="mt-8 rounded-2xl border border-emerald-900/40 bg-emerald-950/20 p-5">
