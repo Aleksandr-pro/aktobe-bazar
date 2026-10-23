@@ -32,3 +32,10 @@
 * зеркало на GitHub — https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk
 
 **Проверки:** `npm run check:types`, `npm run check:shaders`, `npm run check:engine`, `npm run check:apk`.
+
+## Два трека
+
+- **Android-оверлей (APK 1.6)** — `/install`: любая игра, без root, но с задержкой и без доступа к движку.
+- **Unity-пакет (1.6)** — `/unity`: сеть внутри рендера, реальная экономия пикселей и FPS.
+
+Подробнее: [`docs/BAZARFX_ROADMAP.md`](docs/BAZARFX_ROADMAP.md).

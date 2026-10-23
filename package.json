@@ -13,7 +13,9 @@
     "check:apk": "python3 integrations/android/tools/check_apk.py integrations/android/BazarFX.apk",
     "check:shaders:android": "node scripts/check-shaders-android.mjs",
     "check:neural": "python3 scripts/check_sr_weights.py",
-    "train:neural": "python3 scripts/train_sr.py"
+    "train:neural": "python3 scripts/train_sr.py",
+    "check:hlsl": "python3 scripts/check_unity_shaders.py",
+    "export:unity": "python3 scripts/export_unity_weights.py && python3 scripts/make_unitypackage.py"
   },
   "dependencies": {
     "autoprefixer": "^10.6.1",

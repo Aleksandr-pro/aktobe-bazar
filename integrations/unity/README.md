@@ -1,137 +1,92 @@
-# BazarFX — интеграция в Unity
+# BazarFX для Unity — нейросетевой апскейл
 
-Два файла:
+Пакет поднимает кадр, отрендеренный в низком разрешении, обученной нейросетью
+прямо на GPU. Это не пост-эффект «резкость + контраст», а настоящий forward-pass
+свёрточной сети.
 
-| Файл | Что это |
-| --- | --- |
-| `BazarFXUpscale.shader` | проход апскейла: Catmull-Rom + TAA + адаптивный шарп |
-| `BazarFXController.cs` | MonoBehaviour для камеры, пресеты, буферы истории |
-
-## Быстрая установка (5 минут)
-
-1. Скопируй папку `BazarFX` в `Assets/` своего Unity-проекта.
-2. Выбери камеру → **Add Component → BazarFX → BazarFX Controller**.
-3. В инспекторе выбери пресет (`Balanced` по умолчанию) и включи в камере
-   **Rendering → Motion Vectors: Force No Motion** → *нет*, нужно наоборот:
-   `Camera → Rendering → Motion Vectors` должен быть **включён** (URP) — иначе
-   история не репроецируется и TAA автоматически отключается.
-4. Запусти. Слева/справа можно сравнить, включив `showLowResAsClassic` (показывает
-   «как без технологии»).
-
-## Где берётся экономия
-
-Компонент работает как финальный проход: берёт кадр сцены, даунсэмплит и
-восстанавливает. Это даёт экономию на пост-обработке (блум, DOF, colour grading
-идут в низком разрешении), но **не** на геометрии.
-
-Чтобы сэкономить и на геометрии, нужно рендерить сцену в низком разрешении:
-
-**URP (проще всего)**
 ```
-Universal Render Pipeline Asset → Rendering
-  Render Scale            = 0.5
-  Upscaling Filter        = Point (Nearest)   // чтобы BazarFX заменил стандартный
-```
-и подключи `BazarFXController` как `ScriptableRendererFeature` (см. ниже).
-
-**Built-in**
-```csharp
-cam.targetTexture = lowRT;   // 640×360 при 1280×720
-cam.Render();
-// затем Graphics.Blit(lowRT, screen, bazarFxMaterial)
+сцена рендерится в 50% (или 35%) разрешения
+        ↓
+conv 3→8, 3×3, ReLU          ← первый слой, MRT в две RGBA-текстуры
+        ↓
+conv 8→12, 3×3               ← 12 = 4 подпикселя × RGB
+        ↓
+pixelshuffle ×2              ← сразу в двойное разрешение
+        ↓
+Catmull-Rom + TAA + шарп     ← BazarFXUpscale.shader доводит до экрана
 ```
 
-## ScriptableRendererFeature для URP
+## Установка (2 минуты)
 
-```csharp
-using UnityEngine;
-using UnityEngine.Rendering;
-using UnityEngine.Rendering.Universal;
+1. Скачай **`BazarFX-Neural.unitypackage`** со страницы `/install` (или возьми
+   папку `package/` из репозитория).
+2. В Unity: **Assets → Import Package → Custom Package…** → выбери файл.
+3. **Built-in Render Pipeline:**
+   повесь `BazarFXController` на камеру, включи `neural`.
+4. **URP:**
+   - Project Settings → Player → Scripting Define Symbols → добавь `BFX_URP`;
+   - на объекте Universal Renderer Data → **Add Renderer Feature** →
+     `BazarFX Neural Upscale`;
+   - в URP Asset поставь **Render Scale 0.5** — иначе сцена уже отрендерена в
+     полном разрешении и выигрыша по FPS не будет (только качество).
+5. Запусти. Для честного сравнения включи `showLowResAsClassic` (до) и
+   `showNeuralOnly` (только выход сети).
 
-public class BazarFXFeature : ScriptableRendererFeature
-{
-    public Shader shader;
-    public float temporalBlend = 0.15f;
-    public float sharpen = 0.45f;
+## Почему это работает, а не «мылит и шарпит»
 
-    Material mat;
-    BazarFXPass pass;
+Сеть обучена восстанавливать кадр после даунсэмпла. На валидации:
 
-    public override void Create()
-    {
-        if (!shader) shader = Shader.Find("Hidden/BazarFX/Upscale");
-        mat = CoreUtils.CreateEngineMaterial(shader);
-        pass = new BazarFXPass(mat) { renderPassEvent = RenderPassEvent.BeforeRenderingPostProcessing };
-        pass.ConfigureInput(ScriptableRenderPassInput.Motion); // motion vectors!
-    }
+| Изображение | Билинейно | BazarFX-Neural |
+| --- | --- | --- |
+| astronaut | 28.04 дБ | **30.00 дБ** |
+| coffee | 28.12 дБ | **29.17 дБ** |
+| chelsea | 32.56 дБ | **33.94 дБ** |
 
-    public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData data)
-    {
-        mat.SetFloat("_Temporal", temporalBlend);
-        mat.SetFloat("_Sharpen", sharpen);
-        renderer.EnqueuePass(pass);
-    }
+Контроль качества встроен в репозиторий:
 
-    protected override void Dispose(bool disposing) => CoreUtils.Destroy(mat);
-}
-
-class BazarFXPass : ScriptableRenderPass
-{
-    readonly Material mat;
-    RenderTexture history;
-    bool valid;
-
-    public BazarFXPass(Material m) { mat = m; }
-
-    public override void Execute(ScriptableRenderContext ctx, ref RenderingData data)
-    {
-        var cmd = CommandBufferPool.Get("BazarFX");
-        var src = data.cameraData.renderer.cameraColorTargetHandle;
-
-        int w = data.cameraData.cameraTargetDescriptor.width;
-        int h = data.cameraData.cameraTargetDescriptor.height;
-        if (history == null || history.width != w)
-        {
-            if (history) history.Release();
-            history = new RenderTexture(w, h, 0, RenderTextureFormat.DefaultHDR);
-            history.Create();
-            valid = false;
-        }
-
-        var desc = data.cameraData.cameraTargetDescriptor;
-        desc.depthBufferBits = 0;
-        var tmp = Shader.PropertyToID("_BazarFXTmp");
-        cmd.GetTemporaryRT(tmp, desc);
-
-        mat.SetTexture("_HistoryTex", history);
-        mat.SetTexture("_VelocityTex", Shader.GetGlobalTexture("_CameraMotionVectorsTexture"));
-        mat.SetFloat("_HistoryValid", valid ? 1 : 0);
-
-        cmd.Blit(src, tmp, mat);
-        cmd.Blit(tmp, src);
-        cmd.Blit(tmp, history);
-        valid = true;
-
-        ctx.ExecuteCommandBuffer(cmd);
-        CommandBufferPool.Release(cmd);
-    }
-}
+```bash
+python3 scripts/check_unity_shaders.py   # HLSL-симуляция vs обученная модель
+# → средн|Δ| = 0.00000, РЕЗУЛЬТАТ: совпадает
 ```
 
-## Платформы
+Тест разбирает `BazarFXNeuralWeights.hlsl`, повторяет логику шейдеров на numpy и
+сверяет с моделью. Именно он поймал перепутанный порядок весов и инверсию
+подпикселей — без него это вылезло бы только в Unity, у тебя.
 
-* **Android (Vulkan / GLES3)** — работает, ядро то же, что в WebGL-демо.
-* **iOS/Metal** — работает.
-* **WebGL** — работает (это и есть демо на `/fx`).
+## Параметры
 
-## Что важно помнить
+| Параметр | Где | Что делает |
+| --- | --- | --- |
+| `neural` | BazarFXController | включить сеть вместо Catmull-Rom |
+| `neuralStrength` | BazarFXController | 0 — обычная математика, 1 — чистый выход сети |
+| `renderScale` | BazarFXController / URP Asset | разрешение сцены (0.35–0.75) |
+| `temporal`, `sharpen` | BazarFXController | TAA и адаптивный шарп после сети |
 
-1. **Input lag** — TAA и апскейл не добавляют кадров, они лишь восстанавливают
-   картинку. Задержка ввода остаётся как у низкого разрешения.
-2. **Frame Generation в Unity** — отдельная история: нужно два кадра на один
-   vsync и свой компоситор. В этом пакете его нет (в WebGL-демо — есть).
-3. **Прозрачность и UI** — UI рисуйте после BazarFX, иначе он размоется
-   апскейлом.
-4. **Motion vectors** — если их нет (`_CameraMotionVectorsTexture` пустой),
-   TAA выключится, останется только апскейл + шарп. Тогда качество будет как у
-   FSR 1.0, это ожидаемо.
+## Стоимость
+
+Сеть делается в два прохода по низкому разрешению: при `renderScale = 0.5` на
+1080p это ~22 тысячи пикселей на проход, то есть дешевле, чем один проход блума.
+Основная экономия — сама сцена рендерится в 4 раза меньшим числом пикселей.
+
+## Чего здесь нет (честно)
+
+- **DLSS-подобной реконструкции по G-буферам.** Сеть работает по цвету. Глубину и
+  векторы движения использует только TAA (`_CameraMotionVectorsTexture`).
+- **Генерации кадров.** Для неё нужен свой композитор на уровне презентации
+  (два кадра на один vsync) — это отдельная задача.
+- **Обучения на вашей игре.** Веса универсальные (натуральные фото). Можно
+  дообучить под конкретный арт-стиль: `scripts/train_sr.py` + свои картинки.
+
+## Структура
+
+```
+package/
+  package.json                       манифест UPM (для установки через git)
+  Runtime/BazarFXNeural.cs           прогон сети (MRT + два прохода)
+  Runtime/BazarFXController.cs       Built-in RP: камера + пресеты + отладка
+  Runtime/URP/BazarFXNeuralFeature.cs  URP: ScriptableRendererFeature
+  Shaders/BazarFXNeuralConv1.shader  слой 3→8
+  Shaders/BazarFXNeuralConv2.shader  слой 8→12 + pixelshuffle
+  Shaders/BazarFXUpscale.shader      Catmull-Rom + TAA + шарп
+  Shaders/BazarFXNeuralWeights.hlsl  веса (генерируются, не править)
+```
