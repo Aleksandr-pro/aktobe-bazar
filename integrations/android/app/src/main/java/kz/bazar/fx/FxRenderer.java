@@ -332,6 +332,84 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             + "  fragColor = vec4(clamp(mix(plain, acc, uStrength), 0.0, 1.0), 1.0);\n"
             + "}\n";
 
+    /**
+     * Вторая сеть — «дорисовка» деталей (BazarFX Enhance).
+     *
+     *   conv1: 3 → 8, 3×3, ReLU          (две RGBA-текстуры, MRT)
+     *   conv2: 8 → 3, 3×3
+     *   out = src + residual × strength
+     *
+     * Раскладка весов в RGBA32F-текстуре (111 текселей):
+     *   [0..1]    bias conv1 (8 значений)
+     *   [2..55]   conv1: tap(9) × in(3) × группа(2)
+     *   [56]      bias conv2 (rgb)
+     *   [57..110] conv2: tap(9) × группа(2) × out(3)
+     */
+    private static final int E_TEXELS = 111;
+
+    private static final String FRAG_ENH_CONV1 = ""
+            + "#version 300 es\n"
+            + "precision highp float;\n"
+            + "in vec2 vUV;\n"
+            + "layout(location = 0) out vec4 outA;\n"
+            + "layout(location = 1) out vec4 outB;\n"
+            + "uniform sampler2D tSrc;\n"
+            + "uniform sampler2D tW;\n"
+            + "uniform vec2 uSize;\n"
+            + "void main() {\n"
+            + "  vec2 texel = 1.0 / uSize;\n"
+            + "  vec4 acc0 = texelFetch(tW, ivec2(0, 0), 0);\n"
+            + "  vec4 acc1 = texelFetch(tW, ivec2(1, 0), 0);\n"
+            + "  for (int t = 0; t < 9; t++) {\n"
+            + "    int ty = t / 3 - 1;\n"
+            + "    int tx = t - (t / 3) * 3 - 1;\n"
+            + "    vec3 s = texture(tSrc, vUV + vec2(float(tx), float(ty)) * texel).rgb;\n"
+            + "    for (int c = 0; c < 3; c++) {\n"
+            + "      float v = c == 0 ? s.r : (c == 1 ? s.g : s.b);\n"
+            + "      int base = 2 + (t * 3 + c) * 2;\n"
+            + "      acc0 += texelFetch(tW, ivec2(base, 0), 0) * v;\n"
+            + "      acc1 += texelFetch(tW, ivec2(base + 1, 0), 0) * v;\n"
+            + "    }\n"
+            + "  }\n"
+            + "  outA = max(acc0, vec4(0.0));\n"
+            + "  outB = max(acc1, vec4(0.0));\n"
+            + "}\n";
+
+    private static final String FRAG_ENH_CONV2 = ""
+            + "#version 300 es\n"
+            + "precision highp float;\n"
+            + "in vec2 vUV;\n"
+            + "out vec4 fragColor;\n"
+            + "uniform sampler2D tSrc;\n"
+            + "uniform sampler2D tH0;\n"
+            + "uniform sampler2D tH1;\n"
+            + "uniform sampler2D tW;\n"
+            + "uniform vec2 uSize;\n"
+            + "uniform float uStrength;\n"
+            + "void main() {\n"
+            + "  ivec2 p = ivec2(gl_FragCoord.xy);\n"
+            + "  ivec2 pmax = ivec2(uSize) - 1;\n"
+            + "  vec3 res = vec3(0.0);\n"
+            + "  for (int t = 0; t < 9; t++) {\n"
+            + "    int ty = t / 3 - 1;\n"
+            + "    int tx = t - (t / 3) * 3 - 1;\n"
+            + "    ivec2 q = clamp(p + ivec2(tx, ty), ivec2(0), pmax);\n"
+            + "    vec4 c0 = texelFetch(tH0, q, 0);\n"
+            + "    vec4 c1 = texelFetch(tH1, q, 0);\n"
+            + "    int base = 57 + t * 6;\n"
+            + "    res.r += dot(c0, texelFetch(tW, ivec2(base, 0), 0))\n"
+            + "           + dot(c1, texelFetch(tW, ivec2(base + 1, 0), 0));\n"
+            + "    res.g += dot(c0, texelFetch(tW, ivec2(base + 2, 0), 0))\n"
+            + "           + dot(c1, texelFetch(tW, ivec2(base + 3, 0), 0));\n"
+            + "    res.b += dot(c0, texelFetch(tW, ivec2(base + 4, 0), 0))\n"
+            + "           + dot(c1, texelFetch(tW, ivec2(base + 5, 0), 0));\n"
+            + "  }\n"
+            + "  res += texelFetch(tW, ivec2(56, 0), 0).rgb;\n"
+            // источник читаем строго по центру текселя: так же, как при обучении
+            + "  vec3 src = texelFetch(tSrc, p, 0).rgb;\n"
+            + "  fragColor = vec4(clamp(src + res * uStrength, 0.0, 1.0), 1.0);\n"
+            + "}\n";
+
     /** Блочный оптический поток (нужен только для генерации кадров). */
     private static final String FRAG_FLOW = ""
             + "#version 300 es\n"
@@ -477,10 +555,16 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // --- нейросетевой апскейлер (BazarFX-Neural)
     private int netConv1Program, netConv2Program, weightTexture;
     private int netLowFbo, netLowTex, netConv1Fbo, netC1TexA, netC1TexB, netOutFbo, netOutTex;
+
+    // --- вторая сеть: «дорисовка» деталей поверх апскейлера
+    private int enhConv1Program, enhConv2Program, enhWeightTexture;
+    private int enhHiddenFbo, enhHiddenTexA, enhHiddenTexB, enhOutFbo, enhOutTex;
     private int netW = 1, netH = 1;
     private volatile boolean neural;
     private volatile float neuralStrength = 1f;
     private volatile float netScale = 0.45f;
+    private volatile boolean enhance;
+    private volatile float enhanceStrength = 1f;
 
     private int lowW = 1, lowH = 1, fullW = 1, fullH = 1;
     /** Сцена уже в полном разрешении: апскейл не нужен, а low-буфер работает как пробник. */
@@ -551,6 +635,10 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         neural = s.neural;
         neuralStrength = clamp(s.neuralStrength, 0f, 1f);
         netScale = clamp(s.neuralScale, 0.25f, 1f);
+        // Дорисовка имеет смысл только вместе с апскейлером: она обучена
+        // исправлять именно его выход, а не произвольный кадр.
+        enhance = s.enhance && s.neural;
+        enhanceStrength = clamp(s.enhanceStrength, 0f, 1f);
         if (!s.autoQuality) autoScale = 1f;
         split = s.splitCompare ? 0.5f : 0f;
         frameGen = s.frameGen;
@@ -566,7 +654,7 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 + " (сцена " + Math.round(s.renderScale * 100) + "%, шарп "
                 + Math.round(s.sharpen * 100) + "%, clarity " + Math.round(s.clarity * 100)
                 + "%, тон " + Math.round(s.grade * 100) + "%, TAA " + s.temporal
-                + ", frameGen " + s.frameGen + ")");
+                + ", frameGen " + s.frameGen + ", дорисовка " + enhance + ")");
         if (view != null) {
             view.setRenderMode(frameGen ? GLSurfaceView.RENDERMODE_CONTINUOUSLY : GLSurfaceView.RENDERMODE_WHEN_DIRTY);
             view.queueEvent(new Runnable() {
@@ -715,6 +803,11 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             weightTexture = createWeightTexture();
             FxLog.i("Нейросеть готова: " + SRWeights.COUNT + " весов, "
                     + SRWeights.C_IN + "->" + SRWeights.C_HID + "->" + SRWeights.C_OUT_SP);
+            enhConv1Program = buildProgram(VERT, FRAG_ENH_CONV1);
+            enhConv2Program = buildProgram(VERT, FRAG_ENH_CONV2);
+            enhWeightTexture = createEnhanceWeightTexture();
+            FxLog.i("Сеть дорисовки готова: " + EnhanceWeights.COUNT + " весов, "
+                    + EnhanceWeights.C_IN + "->" + EnhanceWeights.C_HID + "->3");
 
             neutralTex = createTexture2D(1, 1, new byte[]{(byte) 128, (byte) 128, (byte) 128, (byte) 255});
             historyValid = false;
@@ -970,10 +1063,12 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // Нейросетевой путь: сеть апскейлит в 2× от низкого разрешения, дальше
             // обычный Catmull-Rom до полного и вся пост-обработка.
             runNeural();
+            // если включена дорисовка — дальше идёт более детальный кадр
+            int stageTex = (enhance && enhOutTex != 0) ? enhOutTex : netOutTex;
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, upFbo);
             GLES30.glViewport(0, 0, fullW, fullH);
             GLES30.glUseProgram(upscaleProgram);
-            bindTex(0, netOutTex);
+            bindTex(0, stageTex);
             uniform1i(upscaleProgram, "tLow", 0);
             uniform2f(upscaleProgram, "uLowRes", netW * 2, netH * 2);
             draw();
@@ -1168,6 +1263,64 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         draw();
     }
 
+    /** Текстура весов второй сети: RGBA32F, 111 текселей. */
+    private int createEnhanceWeightTexture() {
+        float[] src = EnhanceWeights.VALUES;
+        float[] out = new float[E_TEXELS * 4];
+
+        int taps = EnhanceWeights.TAPS, cIn = EnhanceWeights.C_IN, cHid = EnhanceWeights.C_HID;
+        int b1Offset = taps * cIn * cHid;
+        int w2Offset = b1Offset + cHid;
+        int b2Offset = w2Offset + taps * cHid * 3;
+
+        for (int o = 0; o < cHid; o++) {
+            out[o] = src[b1Offset + o];
+        }
+        for (int t = 0; t < taps; t++) {
+            for (int c = 0; c < cIn; c++) {
+                for (int g = 0; g < cHid / 4; g++) {
+                    int texel = 2 + (t * cIn + c) * 2 + g;
+                    for (int k = 0; k < 4; k++) {
+                        out[texel * 4 + k] = src[(t * cIn + c) * cHid + g * 4 + k];
+                    }
+                }
+            }
+        }
+        for (int o = 0; o < 3; o++) {
+            out[56 * 4 + o] = src[b2Offset + o];
+        }
+        for (int t = 0; t < taps; t++) {
+            for (int o = 0; o < 3; o++) {
+                for (int g = 0; g < cHid / 4; g++) {
+                    // o-major: на выходной канал — два текселя (группы 0 и 1)
+                    int texel = 57 + (t * 3 + o) * 2 + g;
+                    for (int k = 0; k < 4; k++) {
+                        out[texel * 4 + k] = src[w2Offset + (t * cHid + g * 4 + k) * 3 + o];
+                    }
+                }
+            }
+        }
+
+        java.nio.FloatBuffer buf = ByteBuffer.allocateDirect(out.length * 4)
+                .order(ByteOrder.nativeOrder()).asFloatBuffer();
+        buf.put(out).position(0);
+
+        int[] tex = new int[1];
+        GLES30.glGenTextures(1, tex, 0);
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, tex[0]);
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA32F,
+                E_TEXELS, 1, 0, GLES30.GL_RGBA, GLES30.GL_FLOAT, buf);
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST);
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_NEAREST);
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE);
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE);
+        int err = GLES30.glGetError();
+        if (err != 0) {
+            FxLog.e("Не удалось создать текстуру весов дорисовки, glError=" + err, null);
+        }
+        return tex[0];
+    }
+
     // --------------------------------------------------------------- targets
 
     // ------------------------------------------------------- нейросеть
@@ -1243,15 +1396,22 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void allocateNeuralTargets() {
         // Вход сети — доля от полного разрешения: сеть дорогая, гонять её в 1:1 нет смысла.
         // Авто-качество действует и на сеть: если GPU не тянет, вход уменьшается.
+        boolean enhReady = !enhance || enhOutTex != 0;
         netW = Math.max(160, Math.round(fullW * netScale * autoScale));
         netH = Math.max(96, Math.round(fullH * netScale * autoScale));
-        if (netW == lowW && netH == lowH && netOutTex != 0) return;
+        if (netW == lowW && netH == lowH && netOutTex != 0 && enhReady) return;
 
         if (netLowTex != 0) {
             int[] nt = {netLowTex, netC1TexA, netC1TexB, netOutTex};
             int[] nf = {netLowFbo, netConv1Fbo, netOutFbo};
             GLES30.glDeleteTextures(nt.length, nt, 0);
             GLES30.glDeleteFramebuffers(nf.length, nf, 0);
+            netLowTex = 0;
+        }
+        if (enhOutTex != 0) {
+            GLES30.glDeleteTextures(3, new int[]{enhHiddenTexA, enhHiddenTexB, enhOutTex}, 0);
+            GLES30.glDeleteFramebuffers(2, new int[]{enhHiddenFbo, enhOutFbo}, 0);
+            enhOutTex = 0;
         }
 
         netLowTex = createTexture2D(netW, netH, null);
@@ -1264,9 +1424,51 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         netOutTex = createTexture2D(netW * 2, netH * 2, null);
         netOutFbo = createFbo(netOutTex);
 
+        if (enhance) {
+            enhHiddenTexA = createTexture2D(netW * 2, netH * 2, null);
+            enhHiddenTexB = createTexture2D(netW * 2, netH * 2, null);
+            enhHiddenFbo = createFbo(enhHiddenTexA, enhHiddenTexB);
+            enhOutTex = createTexture2D(netW * 2, netH * 2, null);
+            enhOutFbo = createFbo(enhOutTex);
+        }
+
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
         FxLog.i("Нейро-апскейл: вход " + netW + "x" + netH + " → выход "
                 + (netW * 2) + "x" + (netH * 2));
+    }
+
+    /** Прогон второй сети: выход апскейлера → 8 каналов → остаток → enhOutTex. */
+    private void runEnhance() {
+        int w = netW * 2, h = netH * 2;
+
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, enhHiddenFbo);
+        int[] buffers = {GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_COLOR_ATTACHMENT1};
+        GLES30.glDrawBuffers(2, buffers, 0);
+        GLES30.glViewport(0, 0, w, h);
+        GLES30.glUseProgram(enhConv1Program);
+        bindTex(0, netOutTex);
+        bindTex(1, enhWeightTexture);
+        uniform1i(enhConv1Program, "tSrc", 0);
+        uniform1i(enhConv1Program, "tW", 1);
+        uniform2f(enhConv1Program, "uSize", w, h);
+        draw();
+        GLES30.glDrawBuffers(1, new int[]{GLES30.GL_COLOR_ATTACHMENT0}, 0);
+
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, enhOutFbo);
+        GLES30.glViewport(0, 0, w, h);
+        GLES30.glUseProgram(enhConv2Program);
+        bindTex(0, netOutTex);
+        bindTex(1, enhHiddenTexA);
+        bindTex(2, enhHiddenTexB);
+        bindTex(3, enhWeightTexture);
+        uniform1i(enhConv2Program, "tSrc", 0);
+        uniform1i(enhConv2Program, "tH0", 1);
+        uniform1i(enhConv2Program, "tH1", 2);
+        uniform1i(enhConv2Program, "tW", 3);
+        uniform2f(enhConv2Program, "uSize", w, h);
+        uniform1f(enhConv2Program, "uStrength", enhanceStrength);
+        draw();
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
     }
 
     /** Прогон сети: LR-кадр → 8 каналов → пиксельшуфл 2× → текстура netOutTex. */
@@ -1304,6 +1506,11 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         uniform1f(netConv2Program, "uStrength", neuralStrength);
         draw();
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+
+        // 4. вторая сеть: доделываем детали поверх результата апскейлера
+        if (enhance && enhOutTex != 0) {
+            runEnhance();
+        }
     }
 
     private void allocateTargets() {
@@ -1332,10 +1539,11 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         boolean scratchSame = needScratch == (scratchTex != 0);
         boolean directSame = newDirect == directMode;
         boolean neuralSame = neural == (netOutTex != 0);
+        boolean enhanceSame = enhance == (enhOutTex != 0);
         int wantNetW = Math.max(160, Math.round(fullW * netScale * autoScale));
         boolean netSizeSame = wantNetW == netW;
         if (sizeSame && temporalSame && frameGenSame && scratchSame && directSame
-                && neuralSame && (netSizeSame || !neural) && frameTexA != 0) {
+                && neuralSame && enhanceSame && (netSizeSame || !neural) && frameTexA != 0) {
             targetsReady = true;
             return; // ничего не поменялось — не дёргаем GPU
         }
@@ -1419,6 +1627,13 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         netLowTex = netC1TexA = netC1TexB = netOutTex = 0;
         netLowFbo = netConv1Fbo = netOutFbo = 0;
+
+        if (enhOutTex != 0) {
+            GLES30.glDeleteTextures(3, new int[]{enhHiddenTexA, enhHiddenTexB, enhOutTex}, 0);
+            GLES30.glDeleteFramebuffers(2, new int[]{enhHiddenFbo, enhOutFbo}, 0);
+        }
+        enhHiddenTexA = enhHiddenTexB = enhOutTex = 0;
+        enhHiddenFbo = enhOutFbo = 0;
         lowFbo = prevLowFbo = upFbo = scratchFbo = histFboA = histFboB = 0;
         frameFboA = frameFboB = flowFbo = flowUpFbo = 0;
     }

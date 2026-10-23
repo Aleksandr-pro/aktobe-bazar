@@ -54,7 +54,8 @@ def shader_sim(img_lr):
     h, w, _ = img_lr.shape
 
     # --- conv1
-    pad = np.pad(img_lr, ((1, 1), (1, 1), (0, 0)))
+    # край повторяется: в шейдере CLAMP_TO_EDGE, не нули (иначе рамка врёт)
+    pad = np.pad(img_lr, ((1, 1), (1, 1), (0, 0)), mode="edge")
     acc = np.zeros((h, w, C_HID), np.float32)
     acc += np.concatenate([W[0], W[1]])[None, None, :]
     for t in range(TAPS):
@@ -95,8 +96,13 @@ def main():
     print(f"PSNR шейдер-симуляция = {psnr(got, ref):.2f} дБ")
     print(f"PSNR билинейно        = {psnr(bil, ref):.2f} дБ")
     print(f"PSNR сеть(numpy)      ~ см. обучение")
-    same = np.mean(np.abs(got - bil)) < 0.5
-    print("результат отличается от билинейного:", not same)
+    # симуляция должна повторять модель до 1e-4, иначе упаковка весов разошлась
+    from train_enhance import load_sr_weights, sr_forward
+    model = sr_forward(lr[None], *load_sr_weights(
+        'integrations/android/app/src/main/java/kz/bazar/fx/SRWeights.java'))[0]
+    d = float(np.abs(model - got).max())
+    print(f"шейдер-симуляция vs numpy-модель: max|Δ| = {d:.6f} "
+          f"{'— совпадает' if d < 1e-4 else '— РАСХОЖДЕНИЕ'}")
 
 
 if __name__ == '__main__':

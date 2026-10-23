@@ -37,8 +37,8 @@ echo "==> 2/6 aapt2 link"
   --manifest "$APP/AndroidManifest.xml" \
   --min-sdk-version "$MIN_SDK" \
   --target-sdk-version "$TARGET_SDK" \
-  --version-code 9 \
-  --version-name "1.7" \
+  --version-code 10 \
+  --version-name "1.8" \
   --auto-add-overlay \
   --java "$BUILD/gen" \
   "$BUILD/res/compiled.zip"

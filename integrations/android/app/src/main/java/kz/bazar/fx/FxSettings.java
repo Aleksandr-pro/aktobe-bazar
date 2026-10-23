@@ -18,11 +18,12 @@ public final class FxSettings {
     public static final int QUALITY_REALISM = 4;
     public static final int QUALITY_NEURAL = 5;
     public static final int QUALITY_ESPORTS = 6;
-    public static final int CUSTOM = 7;
+    public static final int QUALITY_CINEMA = 7;
+    public static final int CUSTOM = 8;
 
     public static final String[] QUALITY_NAMES = {
             "Экономия", "Баланс", "Высокое", "Ультра", "Реализм", "AI · нейро", "Киберспорт",
-            "Свои настройки"
+            "AI · Кинематограф", "Свои настройки"
     };
 
     public static final String[] QUALITY_HINTS = {
@@ -32,7 +33,8 @@ public final class FxSettings {
             "1.0× + TAA + clarity — предел качества апскейла",
             "1.0× + TAA + clarity + тон — «кино»-картинка без лесенок и полос",
             "нейросеть восстанавливает детали из низкого разрешения (медленнее)",
-            "без TAA и генерации кадров — ни шлейфов, ни лишней задержки. Для шутеров"
+            "без TAA и генерации кадров — ни шлейфов, ни лишней задержки. Для шутеров",
+            "две сети: апскейл + дорисовка деталей. Самая «киношная» картинка (дорого)"
     };
 
     public int quality = QUALITY_HIGH;
@@ -49,6 +51,8 @@ public final class FxSettings {
     public boolean splitCompare = false; // слева оригинал, справа обработка
     public boolean neural = false;        // нейросетевой апскейл
     public float neuralStrength = 1f;     // 0..1 — доля «AI» в результате
+    public boolean enhance = false;       // вторая сеть: дорисовка деталей поверх апскейла
+    public float enhanceStrength = 1f;    // 0..1 — сила дорисовки
     public float neuralScale = 0.36f;     // низкое разрешение на входе сети
     public int flowStep = 3;           // шаг сетки блочного потока (для frameGen)
     public int flowSearch = 4;         // радиус поиска в шагах сетки
@@ -74,6 +78,7 @@ public final class FxSettings {
                 temporal = false;
                 frameGen = false;
                 neural = false;
+                enhance = false;
                 flowStep = 4;
                 flowSearch = 3;
                 flowTaps = 1f;
@@ -86,6 +91,7 @@ public final class FxSettings {
                 temporal = false;
                 frameGen = false;
                 neural = false;
+                enhance = false;
                 flowStep = 3;
                 flowSearch = 4;
                 flowTaps = 1f;
@@ -98,6 +104,7 @@ public final class FxSettings {
                 temporal = true;
                 frameGen = false;
                 neural = false;
+                enhance = false;
                 flowStep = 3;
                 flowSearch = 4;
                 flowTaps = 1f;
@@ -110,6 +117,7 @@ public final class FxSettings {
                 temporal = true;
                 frameGen = false;
                 neural = false;
+                enhance = false;
                 flowStep = 2;
                 flowSearch = 5;
                 flowTaps = 2f;
@@ -122,6 +130,7 @@ public final class FxSettings {
                 temporal = true;
                 frameGen = false;
                 neural = false;
+                enhance = false;
                 flowStep = 2;
                 flowSearch = 5;
                 flowTaps = 2f;
@@ -136,8 +145,28 @@ public final class FxSettings {
                 temporal = true;
                 frameGen = false;
                 neural = true;
+                enhance = false;
+                enhanceStrength = 1f;
                 neuralStrength = 1f;
                 neuralScale = 0.36f;
+                break;
+            case QUALITY_CINEMA:
+                // Главный режим «ИИ дорисовывает картинку»: апскейлер вытягивает
+                // форму, вторая сеть доделывает детали, тон доводит до «кино».
+                renderScale = 0.5f;
+                sharpen = 0.3f;
+                clarity = 0.25f;
+                grade = 0.45f;
+                temporal = true;
+                frameGen = false;
+                neural = true;
+                enhance = true;
+                neuralStrength = 1f;
+                enhanceStrength = 1f;
+                neuralScale = 0.36f;
+                flowStep = 4;
+                flowSearch = 3;
+                flowTaps = 1f;
                 break;
             case QUALITY_ESPORTS:
                 // Для соревновательных шутеров важнее всего задержка и отсутствие
@@ -150,6 +179,7 @@ public final class FxSettings {
                 temporal = false;
                 frameGen = false;
                 neural = false;
+                enhance = false;
                 flowStep = 3;
                 flowSearch = 4;
                 flowTaps = 1f;
@@ -185,6 +215,8 @@ public final class FxSettings {
         s.splitCompare = p.getBoolean("splitCompare", s.splitCompare);
         s.neural = p.getBoolean("neural", s.neural);
         s.neuralStrength = p.getFloat("neuralStrength", s.neuralStrength);
+        s.enhance = p.getBoolean("enhance", s.enhance);
+        s.enhanceStrength = p.getFloat("enhanceStrength", s.enhanceStrength);
         s.neuralScale = p.getFloat("neuralScale", s.neuralScale);
         s.flowStep = p.getInt("flowStep", s.flowStep);
         s.flowSearch = p.getInt("flowSearch", s.flowSearch);
@@ -208,6 +240,8 @@ public final class FxSettings {
                 .putBoolean("splitCompare", splitCompare)
                 .putBoolean("neural", neural)
                 .putFloat("neuralStrength", neuralStrength)
+                .putBoolean("enhance", enhance)
+                .putFloat("enhanceStrength", enhanceStrength)
                 .putFloat("neuralScale", neuralScale)
                 .putInt("flowStep", flowStep)
                 .putInt("flowSearch", flowSearch)
