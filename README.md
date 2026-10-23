@@ -20,6 +20,10 @@
 
 **Код:** `lib/fx/` (движок и шейдеры), `components/fx/FxDemo.tsx` (демо),
 `integrations/unity/` (шейдер + компонент для Unity),
+`integrations/android/` (готовый APK + исходники: фоновый режим поверх любых игр),
 описание — [docs/BAZARFX.md](docs/BAZARFX.md).
 
-**Проверки:** `npm run check:types`, `npm run check:shaders`, `npm run check:engine`.
+**APK:** `integrations/android/BazarFX.apk` (69 КБ, Android 8+, без root) — или
+кнопка «Скачать APK» на странице `/fx`.
+
+**Проверки:** `npm run check:types`, `npm run check:shaders`, `npm run check:engine`, `npm run check:apk`.

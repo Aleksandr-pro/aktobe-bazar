@@ -27,3 +27,7 @@ yarn-error.log*
 # env
 .env
 .env*.local
+
+# Android build toolchain (бинарники, см. integrations/android/tools/FETCH_TOOLS.md)
+/integrations/android/tools/sdk/
+/integrations/android/build/
