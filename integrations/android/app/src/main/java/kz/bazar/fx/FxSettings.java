@@ -17,10 +17,12 @@ public final class FxSettings {
     public static final int QUALITY_ULTRA = 3;
     public static final int QUALITY_REALISM = 4;
     public static final int QUALITY_NEURAL = 5;
-    public static final int CUSTOM = 6;
+    public static final int QUALITY_ESPORTS = 6;
+    public static final int CUSTOM = 7;
 
     public static final String[] QUALITY_NAMES = {
-            "Экономия", "Баланс", "Высокое", "Ультра", "Реализм", "AI · нейро", "Свои настройки"
+            "Экономия", "Баланс", "Высокое", "Ультра", "Реализм", "AI · нейро", "Киберспорт",
+            "Свои настройки"
     };
 
     public static final String[] QUALITY_HINTS = {
@@ -29,7 +31,8 @@ public final class FxSettings {
             "0.85× + TAA — резче и чище, чем исходник",
             "1.0× + TAA + clarity — предел качества апскейла",
             "1.0× + TAA + clarity + тон — «кино»-картинка без лесенок и полос",
-            "нейросеть восстанавливает детали из низкого разрешения (медленнее)"
+            "нейросеть восстанавливает детали из низкого разрешения (медленнее)",
+            "без TAA и генерации кадров — ни шлейфов, ни лишней задержки. Для шутеров"
     };
 
     public int quality = QUALITY_HIGH;
@@ -135,6 +138,21 @@ public final class FxSettings {
                 neural = true;
                 neuralStrength = 1f;
                 neuralScale = 0.36f;
+                break;
+            case QUALITY_ESPORTS:
+                // Для соревновательных шутеров важнее всего задержка и отсутствие
+                // шлейфов: TAA «смазывает» бегущих врагов, frameGen добавляет кадр
+                // задержки. Поэтому только шарп + локальный контраст на полном кадре.
+                renderScale = 1f;
+                sharpen = 0.6f;
+                clarity = 0.5f;
+                grade = 0f;
+                temporal = false;
+                frameGen = false;
+                neural = false;
+                flowStep = 3;
+                flowSearch = 4;
+                flowTaps = 1f;
                 break;
             default:
                 quality = CUSTOM;

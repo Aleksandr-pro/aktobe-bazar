@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 // Ссылки ведут прямо на файлы в репозитории: так их можно скачать без сайта.
 // Версию фиксируем тегом, иначе после следующего обновления ссылка «поедет».
 const REPO = 'https://github.com/Aleksandr-pro/aktobe-bazar';
-const REPO_TAG = 'apk-1.6';
+const REPO_TAG = 'apk-1.7';
 const RAW_LINK = `${REPO}/raw/${REPO_TAG}/integrations/android/BazarFX.apk`;
 const CDN_LINK = `https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@${REPO_TAG}/integrations/android/BazarFX.apk`;
 const GITHUB_PAGE = `${REPO}/blob/${REPO_TAG}/integrations/android/BazarFX.apk`;
@@ -66,7 +66,7 @@ export default function InstallPage() {
         <div className="rounded-3xl border border-emerald-900/50 bg-gradient-to-b from-emerald-950/40 to-zinc-950 p-5 sm:p-8">
           <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-800/60 bg-emerald-950/60 px-3 py-1 text-[11px] text-emerald-300">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            версия 1.6 · Android 8+ · без root
+            версия 1.7 · Android 8+ · без root
           </div>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Скачать <span className="text-emerald-400">BazarFX.apk</span>
@@ -171,7 +171,9 @@ export default function InstallPage() {
         <section className="mt-8 rounded-2xl border border-emerald-900/40 bg-emerald-950/20 p-5">
           <h2 className="text-sm font-semibold text-emerald-300">Нейросетевой апскейл (как DLSS, только честный)</h2>
           <p className="mt-2 text-xs leading-relaxed text-zinc-300">
-            В 1.6 появился режим <b>AI · нейро</b>: на телефоне, на GPU, в реальном времени
+            В 1.6 появился режим <b>AI · нейро</b>: на телефоне, на GPU, в реальном времени.
+            В 1.7 добавлен пресет <b>Киберспорт</b> для шутеров: без TAA (нет шлейфов за
+            бегущими) и без генерации кадров (нет лишней задержки)
             прогоняется настоящая свёрточная сеть. Она восстанавливает детали из кадра низкого
             разрешения — так же, как это делают DLSS/XeSS, только без их обучающих датасетов и без
             доступа к движку.
