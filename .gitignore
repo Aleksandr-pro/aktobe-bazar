@@ -31,3 +31,6 @@ yarn-error.log*
 # Android build toolchain (бинарники, см. integrations/android/tools/FETCH_TOOLS.md)
 /integrations/android/tools/sdk/
 /integrations/android/build/
+
+# подпись v4 от apksigner (не нужна в репозитории)
+*.idsig

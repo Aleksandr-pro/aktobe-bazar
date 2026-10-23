@@ -3,12 +3,40 @@ package kz.bazar.fx;
 import android.content.Context;
 import android.content.SharedPreferences;
 
-/** Настройки пайплайна BazarFX (сохраняются между запусками). */
+/**
+ * Настройки пайплайна BazarFX (сохраняются между запусками).
+ *
+ * Качество задаётся пресетом (0..4) и может быть донастроено вручную —
+ * тогда пресет помечается как «свои настройки» (CUSTOM).
+ */
 public final class FxSettings {
 
-    public float renderScale = 0.7f;   // доля пикселей сцены (0.3 .. 1.0)
-    public float sharpen = 0.5f;       // сила адаптивного шарпа (0 .. 1)
-    public boolean temporal = false;   // TAA (без motion vectors даёт шлейфы)
+    public static final int QUALITY_PERFORMANCE = 0;
+    public static final int QUALITY_BALANCED = 1;
+    public static final int QUALITY_HIGH = 2;
+    public static final int QUALITY_ULTRA = 3;
+    public static final int QUALITY_REALISM = 4;
+    public static final int CUSTOM = 5;
+
+    public static final String[] QUALITY_NAMES = {
+            "Экономия", "Баланс", "Высокое", "Ультра", "Реализм", "Свои настройки"
+    };
+
+    public static final String[] QUALITY_HINTS = {
+            "0.5× сцены — максимум FPS, картинка мягче",
+            "0.7× сцены — компромисс по умолчанию",
+            "0.85× + TAA — резче и чище, чем исходник",
+            "1.0× + TAA + clarity — предел качества апскейла",
+            "1.0× + TAA + clarity + тон — «кино»-картинка без лесенок и полос"
+    };
+
+    public int quality = QUALITY_HIGH;
+
+    public float renderScale = 0.85f;   // доля пикселей сцены (0.3 .. 1.0)
+    public float sharpen = 0.55f;       // сила адаптивного шарпа (0 .. 1)
+    public float clarity = 0.35f;       // локальный контраст / «объём» (0 .. 1)
+    public float grade = 0.25f;           // тон: контраст, насыщенность, антибандинг (0 .. 1)
+    public boolean temporal = true;   // TAA (без motion vectors даёт шлейфы)
     public boolean frameGen = false;   // генерация промежуточных кадров (экспериментально)
     public boolean showBubble = true;  // плавающая кнопка
     public boolean secureOverlay = true; // исключить свой оверлей из захвата (FLAG_SECURE)
@@ -18,11 +46,94 @@ public final class FxSettings {
 
     private static final String PREFS = "bazarfx";
 
+    /** Готовый набор значений для пресета. */
+    public static FxSettings preset(Context context, int quality) {
+        FxSettings s = FxSettings.load(context);
+        s.applyPreset(quality);
+        return s;
+    }
+
+    public void applyPreset(int preset) {
+        quality = preset;
+        switch (preset) {
+            case QUALITY_PERFORMANCE:
+                renderScale = 0.5f;
+                sharpen = 0.45f;
+                clarity = 0f;
+                grade = 0f;
+                temporal = false;
+                frameGen = false;
+                flowStep = 4;
+                flowSearch = 3;
+                flowTaps = 1f;
+                break;
+            case QUALITY_BALANCED:
+                renderScale = 0.7f;
+                sharpen = 0.5f;
+                clarity = 0.2f;
+                grade = 0f;
+                temporal = false;
+                frameGen = false;
+                flowStep = 3;
+                flowSearch = 4;
+                flowTaps = 1f;
+                break;
+            case QUALITY_HIGH:
+                renderScale = 0.85f;
+                sharpen = 0.55f;
+                clarity = 0.35f;
+                grade = 0.25f;
+                temporal = true;
+                frameGen = false;
+                flowStep = 3;
+                flowSearch = 4;
+                flowTaps = 1f;
+                break;
+            case QUALITY_ULTRA:
+                renderScale = 1f;
+                sharpen = 0.6f;
+                clarity = 0.5f;
+                grade = 0.4f;
+                temporal = true;
+                frameGen = false;
+                flowStep = 2;
+                flowSearch = 5;
+                flowTaps = 2f;
+                break;
+            case QUALITY_REALISM:
+                renderScale = 1f;
+                sharpen = 0.7f;
+                clarity = 0.6f;
+                grade = 0.5f;
+                temporal = true;
+                frameGen = false;
+                flowStep = 2;
+                flowSearch = 5;
+                flowTaps = 2f;
+                break;
+            default:
+                quality = CUSTOM;
+                break;
+        }
+    }
+
+    public String qualityName() {
+        return QUALITY_NAMES[Math.max(0, Math.min(QUALITY_NAMES.length - 1, quality))];
+    }
+
+    /** Любое ручное изменение = «свои настройки». */
+    public void markCustom() {
+        quality = CUSTOM;
+    }
+
     public static FxSettings load(Context context) {
         SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         FxSettings s = new FxSettings();
+        s.quality = p.getInt("quality", s.quality);
         s.renderScale = p.getFloat("renderScale", s.renderScale);
         s.sharpen = p.getFloat("sharpen", s.sharpen);
+        s.clarity = p.getFloat("clarity", s.clarity);
+        s.grade = p.getFloat("grade", s.grade);
         s.temporal = p.getBoolean("temporal", s.temporal);
         s.frameGen = p.getBoolean("frameGen", s.frameGen);
         s.showBubble = p.getBoolean("showBubble", s.showBubble);
@@ -36,8 +147,11 @@ public final class FxSettings {
     public void save(Context context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
+                .putInt("quality", quality)
                 .putFloat("renderScale", renderScale)
                 .putFloat("sharpen", sharpen)
+                .putFloat("clarity", clarity)
+                .putFloat("grade", grade)
                 .putBoolean("temporal", temporal)
                 .putBoolean("frameGen", frameGen)
                 .putBoolean("showBubble", showBubble)

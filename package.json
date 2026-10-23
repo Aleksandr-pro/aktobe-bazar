@@ -10,7 +10,8 @@
     "check:shaders": "node scripts/check-shaders.mjs",
     "check:types": "tsc --noEmit",
     "check:engine": "node scripts/check-engine.mjs",
-    "check:apk": "python3 integrations/android/tools/check_apk.py integrations/android/BazarFX.apk"
+    "check:apk": "python3 integrations/android/tools/check_apk.py integrations/android/BazarFX.apk",
+    "check:shaders:android": "node scripts/check-shaders-android.mjs"
   },
   "dependencies": {
     "autoprefixer": "^10.6.1",

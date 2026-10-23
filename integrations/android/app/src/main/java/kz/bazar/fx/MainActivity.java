@@ -11,8 +11,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.text.InputType;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -32,6 +30,17 @@ public class MainActivity extends Activity {
     private FxSettings settings;
     private TextView status;
     private Button startButton;
+    private LinearLayout presetBox;
+    private final android.os.Handler uiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable pushRunnable = new Runnable() {
+        @Override
+        public void run() {
+            pushToServiceNow();
+        }
+    };
+    private final java.util.List<SeekBar> seekBars = new java.util.ArrayList<>();
+    private final java.util.List<String> seekKeys = new java.util.ArrayList<>();
+    private final java.util.List<TextView> seekLabels = new java.util.ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -100,10 +109,13 @@ public class MainActivity extends Activity {
         stopButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Intent intent = new Intent(MainActivity.this, FxService.class)
-                        .setAction(FxService.ACTION_STOP);
-                startService(intent);
-                Toast.makeText(MainActivity.this, "BazarFX остановлен", Toast.LENGTH_SHORT).show();
+                if (FxService.isRunning) {
+                    startService(new Intent(MainActivity.this, FxService.class)
+                            .setAction(FxService.ACTION_STOP));
+                    Toast.makeText(MainActivity.this, "BazarFX остановлен", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(MainActivity.this, "BazarFX и так выключен", Toast.LENGTH_SHORT).show();
+                }
                 refreshStatus();
             }
         });
@@ -143,35 +155,41 @@ public class MainActivity extends Activity {
             }
         });
 
-        root.addView(sectionHeader("Качество"));
+        root.addView(sectionHeader("Качество картинки"));
 
-        root.addView(slider("Разрешение сцены", 30, 100, Math.round(settings.renderScale * 100),
-                new OnValue() {
-                    @Override
-                    public void onValue(int value) {
-                        settings.renderScale = value / 100f;
-                        settings.save(MainActivity.this);
-                        updateStatusText();
-                    }
-                }, "%"));
+        TextView qualityHint = new TextView(this);
+        qualityHint.setText("Выбери пресет — он применится сразу, даже если BazarFX уже работает "
+                + "поверх игры. Ниже можно донастроить вручную.");
+        qualityHint.setTextColor(0xFF71717A);
+        qualityHint.setTextSize(12f);
+        qualityHint.setPadding(0, 0, 0, dp(10));
+        root.addView(qualityHint);
 
-        root.addView(slider("Резкость (шарпенинг)", 0, 100, Math.round(settings.sharpen * 100),
-                new OnValue() {
-                    @Override
-                    public void onValue(int value) {
-                        settings.sharpen = value / 100f;
-                        settings.save(MainActivity.this);
-                    }
-                }, "%"));
+        presetBox = new LinearLayout(this);
+        presetBox.setOrientation(LinearLayout.VERTICAL);
+        root.addView(presetBox);
+        rebuildPresets();
+
+        root.addView(sectionHeader("Тонкая настройка"));
+
+        addSlider(root, "Разрешение сцены", 30, 100, "renderScale", "%",
+                "Ниже — быстрее, но мягче. 100% = обработка в родном разрешении экрана.");
+        addSlider(root, "Резкость (шарпенинг)", 0, 100, "sharpen", "%",
+                "Адаптивный шарп: возвращает детали, не раздувая края.");
+        addSlider(root, "Локальный контраст (clarity)", 0, 100, "clarity", "%",
+                "Добавляет «объём» и фактуру поверхностей — заметнее всего на текстурах и траве.");
+        addSlider(root, "Тон и антибандинг (grade)", 0, 100, "grade", "%",
+                "Мягкий контраст, насыщенность и дизеринг: убирает полосы на небе, тумане, тенях.");
 
         root.addView(checkbox("Temporal-сглаживание (TAA)",
-                "Убирает лесенки, но без motion vectors даёт шлейфы. Для статичных сцен — да.",
+                "Убирает лесенки и мерцание на тонких линиях. На статичной картинке — чистое улучшение; "
+                        + "на быстрых рывках камеры возможен лёгкий след.",
                 settings.temporal,
                 new OnChecked() {
                     @Override
                     public void onChecked(boolean checked) {
                         settings.temporal = checked;
-                        settings.save(MainActivity.this);
+                        onManualChange();
                     }
                 }));
 
@@ -183,18 +201,21 @@ public class MainActivity extends Activity {
                     @Override
                     public void onChecked(boolean checked) {
                         settings.frameGen = checked;
-                        settings.save(MainActivity.this);
+                        onManualChange();
                     }
                 }));
 
+        root.addView(sectionHeader("Поведение"));
+
         root.addView(checkbox("Плавающая кнопка",
-                "Кружок FX поверх игры: тап — сравнить с оригиналом, удержание — выключить.",
+                "Кружок FX поверх игры: тап — сравнить с оригиналом, удержание — меню качества.",
                 settings.showBubble,
                 new OnChecked() {
                     @Override
                     public void onChecked(boolean checked) {
                         settings.showBubble = checked;
                         settings.save(MainActivity.this);
+                        pushToService();
                     }
                 }));
 
@@ -207,6 +228,8 @@ public class MainActivity extends Activity {
                     public void onChecked(boolean checked) {
                         settings.secureOverlay = checked;
                         settings.save(MainActivity.this);
+                        Toast.makeText(MainActivity.this,
+                                "Применится после перезапуска BazarFX", Toast.LENGTH_SHORT).show();
                     }
                 }));
 
@@ -282,7 +305,17 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Настройки могли поменять из оверлея (меню на кружке) — подхватываем.
+        settings = FxSettings.load(this);
+        rebuildPresets();
+        syncSliders();
         refreshStatus();
+    }
+
+    @Override
+    protected void onDestroy() {
+        uiHandler.removeCallbacks(pushRunnable);
+        super.onDestroy();
     }
 
     private void refreshStatus() {
@@ -292,9 +325,10 @@ public class MainActivity extends Activity {
     private void updateStatusText() {
         if (status == null) return;
         boolean overlay = Settings.canDrawOverlays(this);
-        status.setText("Версия 1.1 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
+        status.setText("Версия 1.2 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
                 + "\nРазрешение «поверх других приложений»: " + (overlay ? "есть" : "нет")
-                + "\nСцена: " + Math.round(settings.renderScale * 100) + "% пикселей"
+                + "\nКачество: " + settings.qualityName()
+                + " · сцена " + Math.round(settings.renderScale * 100) + "%"
                 + "\nГенерация кадров: " + (settings.frameGen ? "вкл" : "выкл")
                 + "\nTAA: " + (settings.temporal ? "вкл" : "выкл"));
     }
@@ -310,34 +344,35 @@ public class MainActivity extends Activity {
         return tv;
     }
 
-    private interface OnValue {
-        void onValue(int value);
-    }
-
     private interface OnChecked {
         void onChecked(boolean checked);
     }
 
-    private View slider(String label, int min, int max, int current, OnValue listener, String suffix) {
+    /** Слайдер, привязанный к полю настроек по ключу. */
+    private void addSlider(LinearLayout root, String label, int min, int max, final String key,
+                           String suffix, String hint) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(0, dp(10), 0, dp(6));
 
-        TextView title = new TextView(this);
-        title.setText(label + ": " + current + suffix);
+        final TextView title = new TextView(this);
         title.setTextColor(0xFFE4E4E7);
         title.setTextSize(14f);
         box.addView(title);
 
-        SeekBar bar = new SeekBar(this);
+        final SeekBar bar = new SeekBar(this);
         bar.setMax(max - min);
-        bar.setProgress(Math.max(0, current - min));
+        bar.setProgress(Math.max(0, Math.min(max - min, Math.round(getValue(key) * 100) - min)));
+        title.setText(label + ": " + Math.round(getValue(key) * 100) + suffix);
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 int value = min + progress;
                 title.setText(label + ": " + value + suffix);
-                if (fromUser) listener.onValue(value);
+                if (fromUser) {
+                    setValue(key, value / 100f);
+                    onManualChange();
+                }
             }
 
             @Override
@@ -349,7 +384,133 @@ public class MainActivity extends Activity {
             }
         });
         box.addView(bar);
-        return box;
+
+        TextView hintView = new TextView(this);
+        hintView.setText(hint);
+        hintView.setTextColor(0xFF71717A);
+        hintView.setTextSize(11f);
+        box.addView(hintView);
+
+        seekBars.add(bar);
+        seekKeys.add(key);
+        seekLabels.add(title);
+        root.addView(box);
+    }
+
+    private float getValue(String key) {
+        if ("renderScale".equals(key)) return settings.renderScale;
+        if ("sharpen".equals(key)) return settings.sharpen;
+        if ("clarity".equals(key)) return settings.clarity;
+        return settings.grade;
+    }
+
+    private void setValue(String key, float value) {
+        if ("renderScale".equals(key)) settings.renderScale = Math.max(0.3f, value);
+        else if ("sharpen".equals(key)) settings.sharpen = value;
+        else if ("clarity".equals(key)) settings.clarity = value;
+        else settings.grade = value;
+    }
+
+    /** Ручная правка = «свои настройки»: пресет больше не соответствует значениям. */
+    private void onManualChange() {
+        settings.markCustom();
+        settings.save(this);
+        rebuildPresets();
+        updateStatusText();
+        pushToService();
+    }
+
+    /** Перерисовывает список пресетов, подсвечивая активный. */
+    private void rebuildPresets() {
+        if (presetBox == null) return;
+        presetBox.removeAllViews();
+        for (int i = 0; i < 5; i++) {
+            final int preset = i;
+            boolean active = settings.quality == preset;
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(dp(14), dp(10), dp(14), dp(10));
+            row.setBackgroundColor(active ? 0xFF10312A : 0xFF18181B);
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.topMargin = dp(6);
+
+            TextView name = new TextView(this);
+            name.setText((active ? "● " : "○ ") + FxSettings.QUALITY_NAMES[preset]);
+            name.setTextColor(active ? 0xFF34D399 : 0xFFE4E4E7);
+            name.setTextSize(15f);
+            row.addView(name);
+
+            TextView hint = new TextView(this);
+            hint.setText(FxSettings.QUALITY_HINTS[preset]);
+            hint.setTextColor(active ? 0xFF6EE7B7 : 0xFF71717A);
+            hint.setTextSize(11f);
+            row.addView(hint);
+
+            row.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    applyPreset(preset);
+                }
+            });
+            presetBox.addView(row, lp);
+        }
+
+        if (settings.quality == FxSettings.CUSTOM) {
+            TextView custom = new TextView(this);
+            custom.setText("Пресет не выбран: значения изменены вручную");
+            custom.setTextColor(0xFFA1A1AA);
+            custom.setTextSize(11f);
+            custom.setPadding(dp(2), dp(8), 0, 0);
+            presetBox.addView(custom);
+        }
+    }
+
+    private void applyPreset(int preset) {
+        settings.applyPreset(preset);
+        settings.save(this);
+        syncSliders();
+        rebuildPresets();
+        updateStatusText();
+        pushToService();
+        Toast.makeText(this, "Качество: " + FxSettings.QUALITY_NAMES[preset], Toast.LENGTH_SHORT).show();
+    }
+
+    /** Подтягивает положение слайдеров под текущие значения (после смены пресета). */
+    private void syncSliders() {
+        for (int i = 0; i < seekBars.size(); i++) {
+            String key = seekKeys.get(i);
+            int percent = Math.round(getValue(key) * 100);
+            int min = "renderScale".equals(key) ? 30 : 0;
+            SeekBar bar = seekBars.get(i);
+            bar.setProgress(Math.max(0, Math.min(bar.getMax(), percent - min)));
+            String label = "renderScale".equals(key) ? "Разрешение сцены"
+                    : "sharpen".equals(key) ? "Резкость (шарпенинг)"
+                    : "clarity".equals(key) ? "Локальный контраст (clarity)"
+                    : "Тон и антибандинг (grade)";
+            seekLabels.get(i).setText(label + ": " + percent + "%");
+        }
+    }
+
+    /**
+     * Отправляет новые настройки запущенному сервису. С задержкой: при
+     * перетаскивании слайдера значение меняется десятки раз в секунду, а
+     * каждое применение пересоздаёт буферы на GPU — без паузы будут рывки.
+     */
+    private void pushToService() {
+        if (!FxService.isRunning) return;
+        uiHandler.removeCallbacks(pushRunnable);
+        uiHandler.postDelayed(pushRunnable, 220);
+    }
+
+    private void pushToServiceNow() {
+        if (!FxService.isRunning) return;
+        try {
+            startService(new Intent(this, FxService.class).setAction(FxService.ACTION_RELOAD));
+        } catch (Throwable t) {
+            FxLog.w("pushToService: " + t);
+        }
     }
 
     private View checkbox(String label, String hint, boolean checked, OnChecked listener) {

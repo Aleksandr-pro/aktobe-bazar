@@ -4,11 +4,9 @@ import android.graphics.SurfaceTexture;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES30;
 import android.opengl.GLSurfaceView;
-import android.opengl.Matrix;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -18,14 +16,17 @@ import javax.microedition.khronos.opengles.GL10;
  *
  * Поток кадра:
  *   OES-текстура (кадр, снятый MediaProjection)
- *     → downscale в «сцену» низкого разрешения
+ *     → сцена низкого разрешения (renderScale)
  *     → Catmull-Rom апскейл до полного разрешения
- *     → (опционально) temporal-накопление
- *     → адаптивный шарпенинг
- *     → (опционально) интерполяция кадров по блочному оптическому потоку
+ *     → (опц.) temporal-накопление / TAA
+ *     → адаптивный шарпенинг (RCAS-подобный)
+ *     → (опц.) clarity — локальный контраст, «объём»
+ *     → (опц.) grade — тон, насыщенность, антибандинг
  *     → экран (в оверлее поверх игры)
  *
- * Шейдеры — те же, что в WebGL-демо (lib/fx/shaders.ts), портированные на GLES3.
+ * Пресеты качества (Экономия … Реализм) включают разное количество проходов,
+ * поэтому буферы выделяются лениво: на слабом пресете память не тратится на
+ * проходы, которые выключены.
  */
 public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableListener {
 
@@ -58,6 +59,15 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             + "out vec4 fragColor;\n"
             + "uniform samplerExternalOES tOes;\n"
             + "void main() { fragColor = vec4(texture(tOes, vUV).rgb, 1.0); }\n";
+
+    /** Простое копирование текстуры (для истории/предыдущего кадра). */
+    private static final String FRAG_COPY = ""
+            + "#version 300 es\n"
+            + "precision highp float;\n"
+            + "in vec2 vUV;\n"
+            + "out vec4 fragColor;\n"
+            + "uniform sampler2D tSrc;\n"
+            + "void main() { fragColor = texture(tSrc, vUV); }\n";
 
     /** Catmull-Rom апскейл с ограничителем ringing (как в веб-версии). */
     private static final String FRAG_UPSCALE = ""
@@ -130,9 +140,15 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             + "  vec3 sigma = sqrt(max(m2 - m1 * m1, 0.0));\n"
             + "  vec2 vel = (texture(tVelocity, vUV).rg * 2.0 - 1.0) * uVelRange;\n"
             + "  vec3 hist = texture(tHistory, clamp(vUV - vel, vec2(0.0), vec2(1.0))).rgb;\n"
-            + "  hist = clamp(hist, max(mn, m1 - sigma * 1.6), min(mx, m1 + sigma * 1.6));\n"
+            + "  hist = clamp(hist, max(mn, m1 - sigma * 1.25), min(mx, m1 + sigma * 1.25));\n"
+            + "  vec3 cur = texture(tCurrent, vUV).rgb;\n"
             + "  float alpha = mix(1.0, uAlpha, uHistoryValid);\n"
-            + "  fragColor = vec4(mix(hist, texture(tCurrent, vUV).rgb, alpha), 1.0);\n"
+            + "  // История не годится там, где картинка заметно изменилась: без motion\n"
+            + "  // vectors это единственный способ не оставить шлейф за движущимся объектом.\n"
+            + "  vec3 diff = abs(cur - hist);\n"
+            + "  float moved = smoothstep(0.05, 0.16, max(diff.r, max(diff.g, diff.b)));\n"
+            + "  alpha = mix(alpha, 1.0, moved);\n"
+            + "  fragColor = vec4(mix(hist, cur, alpha), 1.0);\n"
             + "}\n";
 
     /** Адаптивный шарпенинг (RCAS-подобный). */
@@ -157,6 +173,67 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             + "  vec3 lap = (b + d + f + h) * 0.25 - e;\n"
             + "  vec3 col = e - lap * uStrength * adaptive * 2.0;\n"
             + "  fragColor = vec4(clamp(col, mn - 0.02, mx + 0.02), 1.0);\n"
+            + "}\n";
+
+    /**
+     * Clarity: локальный контраст на среднем радиусе. Даёт «объём» и
+     * детализацию текстур, не превращая края в белые ореолы — сила
+     * подавляется там, где перепад слишком большой (край объекта).
+     */
+    private static final String FRAG_CLARITY = ""
+            + "#version 300 es\n"
+            + "precision highp float;\n"
+            + "in vec2 vUV;\n"
+            + "out vec4 fragColor;\n"
+            + "uniform sampler2D tSrc;\n"
+            + "uniform vec2 uFullRes;\n"
+            + "uniform float uAmount;\n"
+            + "void main() {\n"
+            + "  vec2 t = 1.0 / uFullRes;\n"
+            + "  vec3 e = texture(tSrc, vUV).rgb;\n"
+            + "  vec3 blur = vec3(0.0);\n"
+            + "  blur += texture(tSrc, vUV + vec2( 2.0,  0.0) * t).rgb;\n"
+            + "  blur += texture(tSrc, vUV + vec2(-2.0,  0.0) * t).rgb;\n"
+            + "  blur += texture(tSrc, vUV + vec2( 0.0,  2.0) * t).rgb;\n"
+            + "  blur += texture(tSrc, vUV + vec2( 0.0, -2.0) * t).rgb;\n"
+            + "  blur += texture(tSrc, vUV + vec2( 1.5,  1.5) * t).rgb * 0.6;\n"
+            + "  blur += texture(tSrc, vUV + vec2(-1.5,  1.5) * t).rgb * 0.6;\n"
+            + "  blur += texture(tSrc, vUV + vec2( 1.5, -1.5) * t).rgb * 0.6;\n"
+            + "  blur += texture(tSrc, vUV + vec2(-1.5, -1.5) * t).rgb * 0.6;\n"
+            + "  blur /= 6.4;\n"
+            + "  vec3 detail = e - blur;\n"
+            + "  float edge = smoothstep(0.06, 0.35, length(detail));\n"
+            + "  vec3 col = e + detail * uAmount * (1.0 - edge * 0.75);\n"
+            + "  fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);\n"
+            + "}\n";
+
+    /**
+     * Grade: мягкая S-кривая контраста, насыщенность и антибандинг.
+     * Дизеринг ±0.5 LSB убивает полосы на градиентах (небо, туман, тени) —
+     * именно из-за них картинка выглядит «цифровой».
+     */
+    private static final String FRAG_GRADE = ""
+            + "#version 300 es\n"
+            + "precision highp float;\n"
+            + "in vec2 vUV;\n"
+            + "out vec4 fragColor;\n"
+            + "uniform sampler2D tSrc;\n"
+            + "uniform vec2 uFullRes;\n"
+            + "uniform float uAmount;\n"
+            + "uniform float uDither;\n"
+            + "float hash(vec2 p) {\n"
+            + "  p = fract(p * vec2(443.897, 441.423));\n"
+            + "  p += dot(p, p.yx + 19.19);\n"
+            + "  return fract((p.x + p.y) * p.x);\n"
+            + "}\n"
+            + "void main() {\n"
+            + "  vec3 c = clamp(texture(tSrc, vUV).rgb, 0.0, 1.0);\n"
+            + "  float k = uAmount * 0.35;\n"
+            + "  vec3 s = mix(c, smoothstep(vec3(0.02), vec3(0.98), c), k);\n"
+            + "  float l = dot(s, vec3(0.299, 0.587, 0.114));\n"
+            + "  s = mix(vec3(l), s, 1.0 + uAmount * 0.12);\n"
+            + "  float n = (hash(vUV * uFullRes + uDither) - 0.5) / 255.0;\n"
+            + "  fragColor = vec4(clamp(s + n, 0.0, 1.0), 1.0);\n"
             + "}\n";
 
     /** Блочный оптический поток (нужен только для генерации кадров). */
@@ -250,26 +327,31 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             + "uniform sampler2D tVelocity;\n"
             + "uniform float uPhase;\n"
             + "uniform float uVelRange;\n"
-            + "uniform float uBypass;\n"
-            + "uniform sampler2D tRaw;\n"
             + "void main() {\n"
-            + "  vec3 cur = texture(tCurrent, vUV).rgb;\n"
-            + "  vec3 col = cur;\n"
+            + "  vec3 col = texture(tCurrent, vUV).rgb;\n"
             + "  if (uPhase > 0.001) {\n"
             + "    vec2 vel = (texture(tVelocity, vUV).rg * 2.0 - 1.0) * uVelRange;\n"
             + "    vec3 prev = texture(tPrevious, clamp(vUV - vel * uPhase, vec2(0.0), vec2(1.0))).rgb;\n"
             + "    vec3 nxt = texture(tCurrent, clamp(vUV + vel * (1.0 - uPhase), vec2(0.0), vec2(1.0))).rgb;\n"
             + "    col = mix(prev, nxt, uPhase);\n"
             + "  }\n"
-            + "  vec3 raw = texture(tRaw, vUV).rgb;\n"
-            + "  col = mix(col, raw, uBypass);\n"
             + "  fragColor = vec4(col, 1.0);\n"
             + "}\n";
 
     private static final float VEL_RANGE = 0.09f;
 
-    private final FxSettings settings;
     private final StatsListener statsListener;
+
+    // --- копия настроек, которую читает GL-поток (без гонок за объектом SharedPreferences)
+    private volatile float cfgScale = 0.7f;
+    private volatile float cfgSharpen = 0.5f;
+    private volatile float cfgClarity = 0.2f;
+    private volatile float cfgGrade = 0f;
+    private volatile boolean cfgTemporal;
+    private volatile boolean cfgFrameGen;
+    private volatile float cfgFlowStep = 3f;
+    private volatile float cfgFlowSearch = 4f;
+    private volatile float cfgFlowTaps = 1f;
 
     private GLSurfaceView view;
     private SurfaceTexture surfaceTexture;
@@ -277,34 +359,35 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int surfaceTextureId = -1;
 
     private int sampleProgram, upscaleProgram, temporalProgram, sharpenProgram,
-            flowProgram, flowUpProgram, displayProgram;
+            clarityProgram, gradeProgram, flowProgram, flowUpProgram, displayProgram, copyProgram;
 
-    private int lowFbo, lowTex, upFbo, upTex, histFboA, histTexA, histFboB, histTexB,
-            finalFboA, finalTexA, finalFboB, finalTexB, flowFbo, flowTex, flowUpFbo, flowUpTex,
-            neutralTex;
+    private int lowFbo, lowTex, prevLowFbo, prevLowTex,
+            upFbo, upTex, scratchFbo, scratchTex,
+            histFboA, histTexA, histFboB, histTexB,
+            frameFboA, frameTexA, frameFboB, frameTexB,
+            flowFbo, flowTex, flowUpFbo, flowUpTex, neutralTex;
 
     private int lowW = 1, lowH = 1, fullW = 1, fullH = 1;
     private int flowGridW = 1, flowGridH = 1;
 
-    private final FloatBuffer quad = createQuad();
-
     private boolean historyValid;
     private boolean hasPrevFrame;
-    private int frameIndex;
-    private int readHist, readFinal;
+    private boolean flowValid;
+    private int readHist;
+    private int frameSlot;         // в какой из двух финальных буферов пишем этот кадр
     private long lastCaptureNanos;
     private double captureIntervalSec = 1 / 60.0;
     private boolean frameAvailable;
     private volatile boolean bypass;
     private volatile boolean frameGen;
-    private volatile float phase;
+    private int frameCounter;
 
     private int captureFrames;
     private int presentFrames;
     private long statsWindowStart;
 
     private volatile boolean failed;
-    private String lastError = "";
+    private volatile String lastError = "";
     private long lastBlackCheckNanos;
     private int consecutiveBlackFrames;
     private boolean warnedAboutBlack;
@@ -318,9 +401,49 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     public FxRenderer(FxSettings settings, StatsListener listener) {
-        this.settings = settings;
         this.statsListener = listener;
-        this.frameGen = settings.frameGen;
+        applySettings(settings);
+    }
+
+    /** Копирует настройки в поля рендерера. Безопасно вызывать из любого потока. */
+    public void applySettings(FxSettings s) {
+        cfgScale = clamp(s.renderScale, 0.3f, 1f);
+        cfgSharpen = clamp(s.sharpen, 0f, 1f);
+        cfgClarity = clamp(s.clarity, 0f, 1f);
+        cfgGrade = clamp(s.grade, 0f, 1f);
+        cfgTemporal = s.temporal;
+        cfgFrameGen = s.frameGen;
+        cfgFlowStep = Math.max(2, s.flowStep);
+        cfgFlowSearch = Math.max(1, s.flowSearch);
+        cfgFlowTaps = Math.max(1f, Math.min(2f, s.flowTaps));
+        frameGen = s.frameGen;
+    }
+
+    /**
+     * Настройки поменяли на ходу (пресет качества из оверлея или из приложения):
+     * пересобираем буферы под новый renderScale и включаем/выключаем проходы.
+     */
+    public void updateSettings(FxSettings s) {
+        applySettings(s);
+        FxLog.i("Настройки применены: " + s.qualityName()
+                + " (сцена " + Math.round(s.renderScale * 100) + "%, шарп "
+                + Math.round(s.sharpen * 100) + "%, clarity " + Math.round(s.clarity * 100)
+                + "%, тон " + Math.round(s.grade * 100) + "%, TAA " + s.temporal
+                + ", frameGen " + s.frameGen + ")");
+        if (view != null) {
+            view.setRenderMode(frameGen ? GLSurfaceView.RENDERMODE_CONTINUOUSLY : GLSurfaceView.RENDERMODE_WHEN_DIRTY);
+            view.queueEvent(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        allocateTargets();
+                    } catch (Throwable t) {
+                        fail("Не удалось применить настройки: " + t, t);
+                    }
+                    view.requestRender();
+                }
+            });
+        }
     }
 
     public void attachView(GLSurfaceView view) {
@@ -359,6 +482,8 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     public void setBypass(boolean value) {
         bypass = value;
+        historyValid = false; // после сравнения историю нельзя тянуть — будет «призрак»
+        if (view != null) view.requestRender();
     }
 
     public boolean isBypass() {
@@ -373,10 +498,6 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
     }
 
-    public void setPhase(float p) {
-        phase = p;
-    }
-
     // ---------------------------------------------------------------- GL setup
 
     @Override
@@ -384,12 +505,21 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         try {
             GLES30.glDisable(GLES30.GL_DEPTH_TEST);
             GLES30.glDisable(GLES30.GL_BLEND);
+            GLES30.glDisable(GLES30.GL_DITHER);
             GLES30.glClearColor(0f, 0f, 0f, 1f);
 
+            if (GLES30.glGetString(GLES30.GL_VERSION) == null) {
+                fail("Устройство не поддерживает OpenGL ES 3.0", null);
+                return;
+            }
+
             sampleProgram = buildProgram(VERT, FRAG_SAMPLE);
+            copyProgram = buildProgram(VERT, FRAG_COPY);
             upscaleProgram = buildProgram(VERT, FRAG_UPSCALE);
             temporalProgram = buildProgram(VERT, FRAG_TEMPORAL);
             sharpenProgram = buildProgram(VERT, FRAG_SHARPEN);
+            clarityProgram = buildProgram(VERT, FRAG_CLARITY);
+            gradeProgram = buildProgram(VERT, FRAG_GRADE);
             flowProgram = buildProgram(VERT, FRAG_FLOW);
             flowUpProgram = buildProgram(VERT, FRAG_FLOW_UP);
             displayProgram = buildProgram(VERT, FRAG_DISPLAY);
@@ -399,7 +529,9 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             hasPrevFrame = false;
             allocateTargets();
             ensureSurfaceTexture();
-            FxLog.i("GL готов: " + fullW + "x" + fullH + ", сцена " + lowW + "x" + lowH);
+            FxLog.i("GL готов: " + GLES30.glGetString(GLES30.GL_VERSION)
+                    + " / " + GLES30.glGetString(GLES30.GL_RENDERER)
+                    + ", экран " + fullW + "x" + fullH + ", сцена " + lowW + "x" + lowH);
         } catch (Throwable t) {
             fail("Не удалось инициализировать OpenGL: " + t, t);
         }
@@ -498,22 +630,30 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
             lastCaptureNanos = now;
             captureFrames++;
-            renderPipeline();
+
+            if (!bypass) {
+                renderPipeline();
+            }
             hasPrevFrame = true;
+            frameCounter++;
         }
 
-        if (frameGen && hasPrevFrame) {
+        if (bypass) {
+            // Сравнение «без BazarFX»: показываем исходный кадр как есть —
+            // без проходов, но и без потери резкости (раньше тут была сцена 0.7×).
+            drawPassthrough();
+            presentFrames++;
+        } else if (frameGen && hasPrevFrame && lastCaptureNanos > 0) {
             double since = (now - lastCaptureNanos) / 1e9;
             float p = (float) Math.min(0.95, Math.max(0.0, since / Math.max(captureIntervalSec, 1e-3)));
-            drawDisplay(p);
+            drawDisplay(flowValid ? p : 0f);
             presentFrames++;
-            if (view != null) view.requestRender();
         } else if (newFrame) {
             drawDisplay(0f);
             presentFrames++;
         }
 
-        if (newFrame) {
+        if (newFrame && !bypass) {
             detectBlackCapture(now);
         }
 
@@ -528,18 +668,13 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void detectBlackCapture(long now) {
         if (now - lastBlackCheckNanos < 1_500_000_000L) return;
         lastBlackCheckNanos = now;
-        if (fullW <= 1 || finalTexA == 0) return;
+        if (lowFbo == 0 || lowW <= 2) return;
         try {
-            int[] fbo = new int[1];
-            GLES30.glGenFramebuffers(1, fbo, 0);
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[0]);
-            GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0,
-                    GLES30.GL_TEXTURE_2D, finalTexA, 0);
-            java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocateDirect(16)
-                    .order(java.nio.ByteOrder.nativeOrder());
+            // Читаем именно СЫРУЮ сцену (что отдал MediaProjection), а не результат
+            // обработки: у финального кадра есть дизеринг и шарп, по ним нельзя судить.
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, lowFbo);
+            ByteBuffer buf = ByteBuffer.allocateDirect(16).order(ByteOrder.nativeOrder());
             GLES30.glReadPixels(0, 0, 2, 2, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf);
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
-            GLES30.glDeleteFramebuffers(1, fbo, 0);
             int sum = 0;
             for (int i = 0; i < 16; i++) {
                 sum += buf.get(i) & 0xFF;
@@ -560,6 +695,8 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         } catch (Throwable ignored) {
             // диагностика не должна влиять на работу
+        } finally {
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
         }
     }
 
@@ -585,16 +722,8 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // ------------------------------------------------------------- pipeline
 
     private void renderPipeline() {
-        int curLow = lowFbo; // сцена низкого разрешения
-
         // 1. снимаем OES-кадр в lowRes
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, curLow);
-        GLES30.glViewport(0, 0, lowW, lowH);
-        GLES30.glUseProgram(sampleProgram);
-        GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
-        GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture);
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(sampleProgram, "tOes"), 0);
-        draw();
+        runSampleTo(lowFbo, lowW, lowH);
 
         // 2. Catmull-Rom апскейл до полного разрешения
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, upFbo);
@@ -605,10 +734,10 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         uniform2f(upscaleProgram, "uLowRes", lowW, lowH);
         draw();
 
-        int shadedTex = upTex;
+        int stage = upTex;
 
-        // 3. временное накопление (если включено)
-        if (settings.temporal) {
+        // 3. временное накопление
+        if (cfgTemporal && histTexA != 0 && histTexB != 0) {
             int writeFbo = readHist == 0 ? histFboA : histFboB;
             int writeTex = readHist == 0 ? histTexA : histTexB;
             int readTex = readHist == 0 ? histTexB : histTexA;
@@ -617,33 +746,77 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES30.glUseProgram(temporalProgram);
             bindTex(0, upTex);
             bindTex(1, readTex);
-            bindTex(2, neutralTex);
+            bindTex(2, frameGen && flowTex != 0 ? flowUpTex : neutralTex);
             uniform1i(temporalProgram, "tCurrent", 0);
             uniform1i(temporalProgram, "tHistory", 1);
             uniform1i(temporalProgram, "tVelocity", 2);
             uniform2f(temporalProgram, "uFullRes", fullW, fullH);
-            uniform1f(temporalProgram, "uAlpha", 0.12f);
+            uniform1f(temporalProgram, "uAlpha", 0.22f);
             uniform1f(temporalProgram, "uHistoryValid", historyValid ? 1f : 0f);
             uniform1f(temporalProgram, "uVelRange", VEL_RANGE);
             draw();
-            shadedTex = writeTex;
+            stage = writeTex;
             readHist = readHist == 0 ? 1 : 0;
             historyValid = true;
         }
 
-        // 4. адаптивный шарпенинг в финальный буфер (ping-pong для генерации кадров)
-        int writeFinalFbo = readFinal == 0 ? finalFboA : finalFboB;
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, writeFinalFbo);
-        GLES30.glViewport(0, 0, fullW, fullH);
-        GLES30.glUseProgram(sharpenProgram);
-        bindTex(0, shadedTex);
-        uniform1i(sharpenProgram, "tSrc", 0);
-        uniform2f(sharpenProgram, "uFullRes", fullW, fullH);
-        uniform1f(sharpenProgram, "uStrength", settings.sharpen);
-        draw();
-        readFinal = readFinal == 0 ? 1 : 0;
+        // 4. пост-обработка: sharp → clarity → grade, последний проход пишет в финальный буфер
+        boolean doClarity = cfgClarity > 0.001f;
+        boolean doGrade = cfgGrade > 0.001f;
+        int passes = 1 + (doClarity ? 1 : 0) + (doGrade ? 1 : 0);
 
-        // 5. если нужна генерация кадров — считаем поток между двумя lowRes-кадрами
+        frameSlot = frameSlot == 0 ? 1 : 0;
+        int targetTex = frameSlot == 0 ? frameTexA : frameTexB;
+        int targetFbo = frameSlot == 0 ? frameFboA : frameFboB;
+
+        int[] dsts = new int[passes];
+        int[] dstFbos = new int[passes];
+        int[] programs = new int[passes];
+        programs[0] = sharpenProgram;
+        if (passes >= 2) programs[1] = clarityProgram;
+        if (passes >= 3) programs[2] = gradeProgram;
+
+        // Промежуточные проходы чередуют scratch ↔ upTex, финальный всегда
+        // пишет в «текущий» буфер кадра, а второй остаётся предыдущим кадром
+        // (нужен для интерполяции и для сравнения «до/после»).
+        if (passes == 1) {
+            dsts[0] = targetTex;
+            dstFbos[0] = targetFbo;
+        } else if (passes == 2) {
+            dsts[0] = scratchTex;
+            dstFbos[0] = scratchFbo;
+            dsts[1] = targetTex;
+            dstFbos[1] = targetFbo;
+        } else {
+            dsts[0] = scratchTex;
+            dstFbos[0] = scratchFbo;
+            dsts[1] = upTex;
+            dstFbos[1] = upFbo;
+            dsts[2] = targetTex;
+            dstFbos[2] = targetFbo;
+        }
+
+        for (int i = 0; i < passes; i++) {
+            int program = programs[i];
+            GLES30.glUseProgram(program);
+            bindTex(0, stage);
+            uniform1i(program, "tSrc", 0);
+            uniform2f(program, "uFullRes", fullW, fullH);
+            if (i == 0) {
+                uniform1f(program, "uStrength", cfgSharpen);
+            } else if (program == clarityProgram) {
+                uniform1f(program, "uAmount", cfgClarity);
+            } else {
+                uniform1f(program, "uAmount", cfgGrade);
+                uniform1f(program, "uDither", (frameCounter % 64) * 1.7f);
+            }
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, dstFbos[i]);
+            GLES30.glViewport(0, 0, fullW, fullH);
+            draw();
+            stage = dsts[i];
+        }
+
+        // 5. поток между кадрами (для генерации промежуточных)
         if (frameGen) {
             computeFlow();
         }
@@ -651,7 +824,19 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
     }
 
+    private void runSampleTo(int fbo, int w, int h) {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo);
+        GLES30.glViewport(0, 0, w, h);
+        GLES30.glUseProgram(sampleProgram);
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
+        GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture);
+        uniform1i(sampleProgram, "tOes", 0);
+        draw();
+    }
+
     private void computeFlow() {
+        if (flowFbo == 0 || prevLowFbo == 0) return;
+
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, flowFbo);
         GLES30.glViewport(0, 0, flowGridW, flowGridH);
         GLES30.glUseProgram(flowProgram);
@@ -660,9 +845,9 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         uniform1i(flowProgram, "tCur", 0);
         uniform1i(flowProgram, "tPrev", 1);
         uniform2f(flowProgram, "uLowRes", lowW, lowH);
-        uniform1f(flowProgram, "uStep", settings.flowStep);
-        uniform1f(flowProgram, "uSearch", settings.flowSearch);
-        uniform1f(flowProgram, "uTaps", settings.flowTaps);
+        uniform1f(flowProgram, "uStep", cfgFlowStep);
+        uniform1f(flowProgram, "uSearch", cfgFlowSearch);
+        uniform1f(flowProgram, "uTaps", cfgFlowTaps);
         uniform1f(flowProgram, "uVelRange", VEL_RANGE);
         draw();
 
@@ -674,13 +859,25 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         uniform2f(flowUpProgram, "uLowRes", lowW, lowH);
         draw();
 
-        // сохраняем текущий lowRes-кадр как предыдущий
+        // текущий lowRes-кадр становится «предыдущим» (копия, без повторного сэмпла OES)
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, prevLowFbo);
         GLES30.glViewport(0, 0, lowW, lowH);
+        GLES30.glUseProgram(copyProgram);
+        bindTex(0, lowTex);
+        uniform1i(copyProgram, "tSrc", 0);
+        draw();
+
+        flowValid = hasPrevFrame;
+    }
+
+    /** Показ исходного кадра без обработки (режим сравнения). */
+    private void drawPassthrough() {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+        GLES30.glViewport(0, 0, fullW, fullH);
         GLES30.glUseProgram(sampleProgram);
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
         GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTexture);
-        GLES30.glUniform1i(GLES30.glGetUniformLocation(sampleProgram, "tOes"), 0);
+        uniform1i(sampleProgram, "tOes", 0);
         draw();
     }
 
@@ -688,88 +885,96 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
         GLES30.glViewport(0, 0, fullW, fullH);
         GLES30.glUseProgram(displayProgram);
-        int curTex = readFinal == 0 ? finalTexB : finalTexA; // последний записанный
-        int prevTex = readFinal == 0 ? finalTexA : finalTexB;
+        int curTex = frameSlot == 0 ? frameTexA : frameTexB; // только что записанный
+        int prevTex = frameSlot == 0 ? frameTexB : frameTexA;
         bindTex(0, curTex);
         bindTex(1, prevTex);
-        bindTex(2, frameGen ? flowUpTex : neutralTex);
-        bindTex(3, lowTex);
+        bindTex(2, frameGen && flowTex != 0 ? flowUpTex : neutralTex);
         uniform1i(displayProgram, "tCurrent", 0);
         uniform1i(displayProgram, "tPrevious", 1);
         uniform1i(displayProgram, "tVelocity", 2);
-        uniform1i(displayProgram, "tRaw", 3);
         uniform1f(displayProgram, "uPhase", p);
         uniform1f(displayProgram, "uVelRange", VEL_RANGE);
-        uniform1f(displayProgram, "uBypass", bypass ? 1f : 0f);
         draw();
     }
 
     // --------------------------------------------------------------- targets
 
-    private int prevLowFbo, prevLowTex;
-
     private void allocateTargets() {
         if (fullW <= 1) return;
-        float scale = Math.max(0.25f, Math.min(1f, settings.renderScale));
-        lowW = Math.max(64, Math.round(fullW * scale));
-        lowH = Math.max(36, Math.round(fullH * scale));
-        flowGridW = Math.max(8, lowW / Math.max(2, settings.flowStep));
-        flowGridH = Math.max(8, lowH / Math.max(2, settings.flowStep));
+        float scale = clamp(cfgScale, 0.3f, 1f);
+        int newLowW = Math.max(64, Math.round(fullW * scale));
+        int newLowH = Math.max(36, Math.round(fullH * scale));
+        int newGridW = Math.max(8, newLowW / Math.max(2, (int) cfgFlowStep));
+        int newGridH = Math.max(8, newLowH / Math.max(2, (int) cfgFlowStep));
+
+        boolean sizeSame = (newLowW == lowW && newLowH == lowH
+                && newGridW == flowGridW && newGridH == flowGridH);
+        boolean temporalSame = cfgTemporal == (histTexA != 0);
+        boolean frameGenSame = cfgFrameGen == (prevLowTex != 0);
+        if (sizeSame && temporalSame && frameGenSame && frameTexA != 0) {
+            return; // ничего не поменялось — не дёргаем GPU
+        }
+
+        lowW = newLowW;
+        lowH = newLowH;
+        flowGridW = newGridW;
+        flowGridH = newGridH;
 
         destroyTargets();
 
-        int[] fbo = new int[1];
-        GLES30.glGenFramebuffers(1, fbo, 0);
-        lowFbo = fbo[0];
         lowTex = createTexture2D(lowW, lowH, null);
-        attach(lowFbo, lowTex);
+        lowFbo = createFbo(lowTex);
 
-        GLES30.glGenFramebuffers(1, fbo, 0);
-        prevLowFbo = fbo[0];
-        prevLowTex = createTexture2D(lowW, lowH, null);
-        attach(prevLowFbo, prevLowTex);
-
-        GLES30.glGenFramebuffers(1, fbo, 0);
-        upFbo = fbo[0];
         upTex = createTexture2D(fullW, fullH, null);
-        attach(upFbo, upTex);
+        upFbo = createFbo(upTex);
 
-        GLES30.glGenFramebuffers(2, fbo, 0);
-        histFboA = fbo[0];
-        histFboB = fbo[1];
-        histTexA = createTexture2D(fullW, fullH, null);
-        histTexB = createTexture2D(fullW, fullH, null);
-        attach(histFboA, histTexA);
-        attach(histFboB, histTexB);
+        scratchTex = createTexture2D(fullW, fullH, null);
+        scratchFbo = createFbo(scratchTex);
 
-        GLES30.glGenFramebuffers(2, fbo, 0);
-        finalFboA = fbo[0];
-        finalFboB = fbo[1];
-        finalTexA = createTexture2D(fullW, fullH, null);
-        finalTexB = createTexture2D(fullW, fullH, null);
-        attach(finalFboA, finalTexA);
-        attach(finalFboB, finalTexB);
+        frameTexA = createTexture2D(fullW, fullH, null);
+        frameFboA = createFbo(frameTexA);
+        frameTexB = createTexture2D(fullW, fullH, null);
+        frameFboB = createFbo(frameTexB);
 
-        GLES30.glGenFramebuffers(1, fbo, 0);
-        flowFbo = fbo[0];
-        flowTex = createTexture2D(flowGridW, flowGridH, null);
-        attach(flowFbo, flowTex);
-
-        GLES30.glGenFramebuffers(1, fbo, 0);
-        flowUpFbo = fbo[0];
-        flowUpTex = createTexture2D(lowW, lowH, null);
-        attach(flowUpFbo, flowUpTex);
+        if (cfgTemporal) {
+            histTexA = createTexture2D(fullW, fullH, null);
+            histFboA = createFbo(histTexA);
+            histTexB = createTexture2D(fullW, fullH, null);
+            histFboB = createFbo(histTexB);
+        }
+        if (cfgFrameGen) {
+            prevLowTex = createTexture2D(lowW, lowH, null);
+            prevLowFbo = createFbo(prevLowTex);
+            flowTex = createTexture2D(flowGridW, flowGridH, null);
+            flowFbo = createFbo(flowTex);
+            flowUpTex = createTexture2D(lowW, lowH, null);
+            flowUpFbo = createFbo(flowUpTex);
+            flowValid = false;
+        }
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
         historyValid = false;
         hasPrevFrame = false;
+
+        int texCount = 4 + (cfgTemporal ? 2 : 0) + (cfgFrameGen ? 3 : 0) + 1;
+        long mb = (long) texCount * fullW * fullH * 4L / (1024 * 1024);
+        int err = GLES30.glGetError();
+        FxLog.i("Буферы: " + fullW + "x" + fullH + " → сцена " + lowW + "x" + lowH
+                + ", ~" + mb + " МБ видеопамяти" + (err != 0 ? ", glError=" + err : ""));
     }
 
     private void destroyTargets() {
-        int[] textures = {lowTex, prevLowTex, upTex, histTexA, histTexB, finalTexA, finalTexB, flowTex, flowUpTex};
-        int[] framebuffers = {lowFbo, prevLowFbo, upFbo, histFboA, histFboB, finalFboA, finalFboB, flowFbo, flowUpFbo};
+        int[] textures = {lowTex, prevLowTex, upTex, scratchTex, histTexA, histTexB,
+                frameTexA, frameTexB, flowTex, flowUpTex};
+        int[] framebuffers = {lowFbo, prevLowFbo, upFbo, scratchFbo, histFboA, histFboB,
+                frameFboA, frameFboB, flowFbo, flowUpFbo};
         GLES30.glDeleteTextures(textures.length, textures, 0);
         GLES30.glDeleteFramebuffers(framebuffers.length, framebuffers, 0);
+        lowTex = prevLowTex = upTex = scratchTex = histTexA = histTexB = 0;
+        frameTexA = frameTexB = flowTex = flowUpTex = 0;
+        lowFbo = prevLowFbo = upFbo = scratchFbo = histFboA = histFboB = 0;
+        frameFboA = frameFboB = flowFbo = flowUpFbo = 0;
     }
 
     public void release() {
@@ -785,13 +990,21 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
     }
 
-    private void attach(int fbo, int tex) {
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo);
-        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, tex, 0);
+    private int createFbo(int tex) {
+        int[] fbo = new int[1];
+        GLES30.glGenFramebuffers(1, fbo, 0);
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo[0]);
+        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_TEXTURE_2D, tex, 0);
+        int status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER);
+        if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
+            throw new RuntimeException("Framebuffer неполный: 0x" + Integer.toHexString(status));
+        }
         GLES30.glViewport(0, 0, 1, 1);
         GLES30.glClearColor(0f, 0f, 0f, 1f);
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT);
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+        return fbo[0];
     }
 
     private int createTexture2D(int w, int h, byte[] initial) {
@@ -842,8 +1055,15 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES30.glAttachShader(p, vs);
         GLES30.glAttachShader(p, fs);
         GLES30.glLinkProgram(p);
+        int[] ok = new int[1];
+        GLES30.glGetProgramiv(p, GLES30.GL_LINK_STATUS, ok, 0);
         GLES30.glDeleteShader(vs);
         GLES30.glDeleteShader(fs);
+        if (ok[0] == 0) {
+            String log = GLES30.glGetProgramInfoLog(p);
+            GLES30.glDeleteProgram(p);
+            throw new RuntimeException("Ошибка линковки программы: " + log);
+        }
         return p;
     }
 
@@ -896,17 +1116,7 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
     }
 
-    private static FloatBuffer createQuad() {
-        float[] verts = {-1, -1, 0, 3, -1, 0, -1, 3, 0};
-        ByteBuffer bb = ByteBuffer.allocateDirect(verts.length * 4).order(ByteOrder.nativeOrder());
-        FloatBuffer fb = bb.asFloatBuffer();
-        fb.put(verts).position(0);
-        return fb;
-    }
-
-    // Не используется, но оставляем для будущих проходов с матрицами
-    private final float[] mvp = new float[16];
-    {
-        Matrix.setIdentityM(mvp, 0);
+    private static float clamp(float v, float min, float max) {
+        return v < min ? min : (v > max ? max : v);
     }
 }

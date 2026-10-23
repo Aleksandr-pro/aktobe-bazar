@@ -64,7 +64,7 @@ export default function InstallPage() {
         <div className="rounded-3xl border border-emerald-900/50 bg-gradient-to-b from-emerald-950/40 to-zinc-950 p-5 sm:p-8">
           <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-800/60 bg-emerald-950/60 px-3 py-1 text-[11px] text-emerald-300">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            версия 1.1 · Android 8+ · без root
+            версия 1.2 · Android 8+ · без root
           </div>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Скачать <span className="text-emerald-400">BazarFX.apk</span>
@@ -121,7 +121,7 @@ export default function InstallPage() {
             </ol>
             <p className="mt-3 text-xs leading-relaxed text-zinc-500">
               Плавающая кнопка <span className="rounded bg-emerald-950 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300">FX</span>{' '}
-              поверх игры: тап — сравнить с оригиналом, удержание — выключить.
+              поверх игры: тап — сравнить с оригиналом, удержание — меню качества (5 пресетов прямо в игре).
             </p>
           </div>
 
@@ -132,6 +132,37 @@ export default function InstallPage() {
               Наведи камеру телефона — откроется CDN-ссылка на APK
             </div>
           </div>
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-emerald-900/40 bg-emerald-950/20 p-5">
+          <h2 className="text-sm font-semibold text-emerald-300">Пять уровней качества — до «реализм»</h2>
+          <p className="mt-2 text-xs leading-relaxed text-zinc-300">
+            Меняются на ходу: в приложении, кнопкой «Качество» в уведомлении или удержанием кружка{' '}
+            <span className="rounded bg-emerald-950 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300">FX</span>{' '}
+            прямо в игре — перезапускать захват не нужно.
+          </p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[420px] text-left text-[11px] text-zinc-300">
+              <thead className="text-zinc-500">
+                <tr>
+                  <th className="py-1 pr-3 font-medium">Пресет</th>
+                  <th className="py-1 pr-3 font-medium">Сцена</th>
+                  <th className="py-1 font-medium">Что включено</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-zinc-800/70"><td className="py-1 pr-3">Экономия</td><td className="py-1 pr-3 font-mono">0.5×</td><td className="py-1">апскейл + шарп</td></tr>
+                <tr className="border-t border-zinc-800/70"><td className="py-1 pr-3">Баланс</td><td className="py-1 pr-3 font-mono">0.7×</td><td className="py-1">+ clarity</td></tr>
+                <tr className="border-t border-zinc-800/70"><td className="py-1 pr-3">Высокое</td><td className="py-1 pr-3 font-mono">0.85×</td><td className="py-1">+ TAA, тон</td></tr>
+                <tr className="border-t border-zinc-800/70"><td className="py-1 pr-3">Ультра</td><td className="py-1 pr-3 font-mono">1.0×</td><td className="py-1">+ сильный clarity и тон</td></tr>
+                <tr className="border-t border-zinc-800/70"><td className="py-1 pr-3 text-emerald-300">Реализм</td><td className="py-1 pr-3 font-mono">1.0×</td><td className="py-1">максимум: TAA без лесенок, объём, антибандинг</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+            Честно: «Реализм» — это предел того, что можно выжать из уже готового кадра. Он убирает лесенки,
+            возвращает детали и полосы градиентов, но не может дорисовать то, чего игра не отрендерила.
+          </p>
         </section>
 
         <section className="mt-8 rounded-2xl border border-amber-900/40 bg-amber-950/20 p-5">
@@ -162,7 +193,7 @@ export default function InstallPage() {
               <li>• Чёрный экран → выключи «Исключать оверлей из захвата».</li>
               <li>• Сбой при запуске тяжёлой игры — исправлено в 1.1 (повторный захват экрана после поворота). Ставь 1.1.</li>
               <li>• Не ставится → разреши установку из этого источника в настройках.</li>
-              <li>• Лагает → уменьши «Разрешение сцены» и выключи генерацию кадров.</li>
+              <li>• Лагает → выбери пресет «Экономия» (или уменьши «Разрешение сцены») и выключи генерацию кадров.</li>
               <li>• Приложение вылетело → открой BazarFX и нажми <span className="font-semibold text-zinc-200">«Лог»</span> внизу: там весь ход работы. Кнопка «Отправить лог» пересылает текст мне.</li>
               <li>• Игра с защитой от записи экрана (FLAG_SECURE) → BazarFX покажет предупреждение, картинку улучшить нельзя.</li>
               <li>• Исходники и сборка: <span className="font-mono text-zinc-300">integrations/android/</span></li>
