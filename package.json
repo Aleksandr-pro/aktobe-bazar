@@ -15,7 +15,9 @@
     "check:neural": "python3 scripts/check_sr_weights.py",
     "train:neural": "python3 scripts/train_sr.py",
     "check:hlsl": "python3 scripts/check_unity_shaders.py",
-    "export:unity": "python3 scripts/export_unity_weights.py && python3 scripts/make_unitypackage.py"
+    "export:unity": "python3 scripts/export_unity_weights.py && python3 scripts/make_unitypackage.py",
+    "check:enhance": "python3 scripts/check_enhance.py",
+    "train:enhance": "python3 scripts/train_enhance.py"
   },
   "dependencies": {
     "autoprefixer": "^10.6.1",

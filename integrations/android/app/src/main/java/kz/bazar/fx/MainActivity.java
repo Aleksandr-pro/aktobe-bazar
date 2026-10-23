@@ -237,6 +237,26 @@ public class MainActivity extends Activity {
                     }
                 }));
 
+        addSlider(root, "Сила дорисовки деталей", 0, 100, "enhanceStrength", "%",
+                "Вторая сеть доделывает то, что апскейлер потерял: микрорельеф, границы, "
+                        + "мелкие детали. 0% — выключено. Работает только вместе с нейросетью.");
+
+        root.addView(checkbox("Дорисовка деталей (вторая сеть)",
+                "Поверх результата апскейлера работает ещё одна свёрточная сеть "
+                        + "(3→8→3 каналов): она добавляет детали, а не размывает их. "
+                        + "Даёт самую «живую» картинку, но нагружает GPU сильнее.",
+                settings.enhance,
+                new OnChecked() {
+                    @Override
+                    public void onChecked(boolean checked) {
+                        settings.enhance = checked;
+                        // без апскейлера второй сети нечего исправлять
+                        if (checked) settings.neural = true;
+                        settings.save(MainActivity.this);
+                        pushToService();
+                    }
+                }));
+
         root.addView(checkbox("Авто-качество",
                 "Если устройство не успевает, BazarFX сам снижает масштаб сцены, "
                         + "чтобы картинка оставалась плавной. Лучше оставить включённым.",
@@ -484,6 +504,7 @@ public class MainActivity extends Activity {
 
     private float getValue(String key) {
         if ("neuralStrength".equals(key)) return settings.neuralStrength;
+        if ("enhanceStrength".equals(key)) return settings.enhanceStrength;
         if ("renderScale".equals(key)) return settings.renderScale;
         if ("sharpen".equals(key)) return settings.sharpen;
         if ("clarity".equals(key)) return settings.clarity;
@@ -494,6 +515,12 @@ public class MainActivity extends Activity {
         if ("neuralStrength".equals(key)) {
             settings.neuralStrength = value;
             settings.neural = value > 0.01f;
+            return;
+        }
+        if ("enhanceStrength".equals(key)) {
+            settings.enhanceStrength = value;
+            settings.enhance = value > 0.01f;
+            if (settings.enhance) settings.neural = true;
             return;
         }
         if ("renderScale".equals(key)) settings.renderScale = Math.max(0.3f, value);
@@ -577,6 +604,7 @@ public class MainActivity extends Activity {
             SeekBar bar = seekBars.get(i);
             bar.setProgress(Math.max(0, Math.min(bar.getMax(), percent - min)));
             String label = "neuralStrength".equals(key) ? "Сила нейросети (AI)"
+                    : "enhanceStrength".equals(key) ? "Сила дорисовки деталей"
                     : "renderScale".equals(key) ? "Разрешение сцены"
                     : "sharpen".equals(key) ? "Резкость (шарпенинг)"
                     : "clarity".equals(key) ? "Локальный контраст (clarity)"

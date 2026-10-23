@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 // Ссылки ведут прямо на файлы в репозитории: так их можно скачать без сайта.
 // Версию фиксируем тегом, иначе после следующего обновления ссылка «поедет».
 const REPO = 'https://github.com/Aleksandr-pro/aktobe-bazar';
-const REPO_TAG = 'apk-1.7';
+const REPO_TAG = 'apk-1.8';
 const RAW_LINK = `${REPO}/raw/${REPO_TAG}/integrations/android/BazarFX.apk`;
 const CDN_LINK = `https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@${REPO_TAG}/integrations/android/BazarFX.apk`;
 const GITHUB_PAGE = `${REPO}/blob/${REPO_TAG}/integrations/android/BazarFX.apk`;
@@ -66,7 +66,7 @@ export default function InstallPage() {
         <div className="rounded-3xl border border-emerald-900/50 bg-gradient-to-b from-emerald-950/40 to-zinc-950 p-5 sm:p-8">
           <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-800/60 bg-emerald-950/60 px-3 py-1 text-[11px] text-emerald-300">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            версия 1.7 · Android 8+ · без root
+            версия 1.8 · Android 8+ · без root
           </div>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Скачать <span className="text-emerald-400">BazarFX.apk</span>
@@ -171,19 +171,22 @@ export default function InstallPage() {
         <section className="mt-8 rounded-2xl border border-emerald-900/40 bg-emerald-950/20 p-5">
           <h2 className="text-sm font-semibold text-emerald-300">Нейросетевой апскейл (как DLSS, только честный)</h2>
           <p className="mt-2 text-xs leading-relaxed text-zinc-300">
-            В 1.6 появился режим <b>AI · нейро</b>: на телефоне, на GPU, в реальном времени.
-            В 1.7 добавлен пресет <b>Киберспорт</b> для шутеров: без TAA (нет шлейфов за
-            бегущими) и без генерации кадров (нет лишней задержки)
-            прогоняется настоящая свёрточная сеть. Она восстанавливает детали из кадра низкого
-            разрешения — так же, как это делают DLSS/XeSS, только без их обучающих датасетов и без
-            доступа к движку.
+            В 1.6 появился режим <b>AI · нейро</b>: на телефоне, на GPU, в реальном времени
+            прогоняется настоящая свёрточная сеть. В 1.7 — пресет <b>Киберспорт</b> для шутеров
+            (без TAA и генерации кадров: ни шлейфов, ни лишней задержки). В 1.8 — вторая сеть
+            <b>дорисовки деталей</b>: она работает поверх апскейлера и добавляет то, что тот
+            потерял — микрорельеф, границы, мелкие детали. Режим называется
+            <b>AI · Кинематограф</b>.
           </p>
           <ul className="mt-3 space-y-1 text-xs leading-relaxed text-zinc-400">
-            <li>• Архитектура: conv 3→8 (3×3, ReLU) → conv 8→12 (3×3) → pixelshuffle ×2.</li>
+            <li>• Апскейлер: conv 3→8 (3×3, ReLU) → conv 8→12 (3×3) → pixelshuffle ×2.</li>
+            <li>• Дорисовка: conv 3→8 (3×3, ReLU) → conv 8→3 (3×3), остаток прибавляется к кадру.</li>
+            <li>• Обе сети — 1543 веса вместе; проверены симуляцией шейдеров (<span className="font-mono text-zinc-300">npm run check:enhance</span>).</li>
             <li>• 1100 весов, обучены офлайн скриптом <span className="font-mono text-zinc-300">scripts/train_sr.py</span> и упакованы в текстуру.</li>
             <li>• На валидации сеть даёт ~30 дБ PSNR против ~28 дБ у билинейного апскейла — то есть реально, а не «на глаз».</li>
             <li>• Сила эффекта регулируется ползунком: 0% — обычная математика, 100% — чистый выход сети.</li>
             <li>• Требует GPU побыстрее: на слабом устройстве включи «Авто-качество».</li>
+            <li>• Силу дорисовки можно убавить отдельным ползунком — от 0 до 100%.</li>
           </ul>
           <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
             Честно: это не DLSS 5. Настоящий DLSS восстанавливает кадр из буферов движка (глубина,
