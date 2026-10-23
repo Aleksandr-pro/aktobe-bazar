@@ -372,6 +372,13 @@ export default function FxDemo() {
             </div>
           </a>
           <nav className="flex items-center gap-3 text-sm text-zinc-400">
+            <a
+              href="/BazarFX.apk"
+              download
+              className="rounded-xl border border-emerald-700 bg-emerald-950/40 px-3 py-2 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-900/40"
+            >
+              Скачать APK
+            </a>
             {canInstall && (
               <button
                 type="button"
@@ -833,8 +840,8 @@ export default function FxDemo() {
               },
               {
                 n: '4',
-                t: 'Забери в игру',
-                d: 'Готовые шейдеры и инструкция для Unity/Android — в docs/BAZARFX.md и integrations/unity.',
+                t: 'Или поставь APK',
+                d: 'Кнопка «Скачать APK» — приложение поверх любых игр (MediaProjection + оверлей). Подробности: integrations/android.',
               },
             ].map((step) => (
               <li key={step.n} className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">

@@ -9,7 +9,8 @@
     "lint": "next lint",
     "check:shaders": "node scripts/check-shaders.mjs",
     "check:types": "tsc --noEmit",
-    "check:engine": "node scripts/check-engine.mjs"
+    "check:engine": "node scripts/check-engine.mjs",
+    "check:apk": "python3 integrations/android/tools/check_apk.py integrations/android/BazarFX.apk"
   },
   "dependencies": {
     "autoprefixer": "^10.6.1",
