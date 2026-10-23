@@ -772,9 +772,13 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         int[] dsts = new int[passes];
         int[] dstFbos = new int[passes];
         int[] programs = new int[passes];
+        // Порядок и состав проходов зависят от того, что включено в настройках:
+        // sharp → (clarity) → (grade). Собираем список явно, иначе при
+        // выключенном clarity, но включённом grade, второй проход взял бы не тот шейдер.
         programs[0] = sharpenProgram;
-        if (passes >= 2) programs[1] = clarityProgram;
-        if (passes >= 3) programs[2] = gradeProgram;
+        int slot = 1;
+        if (doClarity) programs[slot++] = clarityProgram;
+        if (doGrade) programs[slot] = gradeProgram;
 
         // Промежуточные проходы чередуют scratch ↔ upTex, финальный всегда
         // пишет в «текущий» буфер кадра, а второй остаётся предыдущим кадром
