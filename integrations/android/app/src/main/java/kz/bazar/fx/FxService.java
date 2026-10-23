@@ -473,7 +473,7 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         title.setPadding(0, 0, 0, pad / 2);
         panel.addView(title);
 
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < FxSettings.QUALITY_NAMES.length - 1; i++) {
             final int preset = i;
             TextView item = new TextView(this);
             boolean active = settings.quality == preset;
