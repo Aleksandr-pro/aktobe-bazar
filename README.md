@@ -31,7 +31,8 @@
 * файл с сайта — `/BazarFX.apk`
 * зеркало на GitHub — https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk
 
-**Проверки:** `npm run check:types`, `npm run check:shaders`, `npm run check:engine`, `npm run check:apk`.
+**Проверки:** `npm run check:types`, `npm run check:shaders`, `npm run check:engine`, `npm run check:apk`,
+`npm run check:horizon`.
 
 ## Два трека
 
@@ -39,6 +40,20 @@
 - **Unity-пакет (1.6)** — `/unity`: сеть внутри рендера, реальная экономия пикселей и FPS.
 
 Подробнее: [`docs/BAZARFX_ROADMAP.md`](docs/BAZARFX_ROADMAP.md).
+
+## Horizon Aktobe — гонка по степи в браузере
+
+Своя «Forza Horizon для телефона»: открывается по ссылке, без установки.
+Степь Актюбинской области, трасса 1.6 км, трамплины, солончак, заносы, пыль
+из-под колёс, мини-карта и рекорд трассы (локально).
+
+* играть — **`/horizon`**
+* на телефоне — горизонтально, в Chrome/Safari; управление появляется само
+* демонстрация совместимости с BazarFX — «пиксельный режим» в паузе
+
+**Код:** `lib/horizon/` (мир и физика), `components/horizon/` (рендер и HUD),
+описание — [docs/HORIZON.md](docs/HORIZON.md).
+Проверка без браузера: `npm run check:horizon`.
 
 ## Прямые ссылки на файлы (всегда из репозитория)
 

@@ -387,6 +387,12 @@ export default function FxDemo() {
                 Установить на телефон
               </button>
             )}
+            <a
+              href="/horizon"
+              className="hidden rounded-xl border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-900 sm:block"
+            >
+              Гонка Horizon
+            </a>
             <a href="#how" className="hidden hover:text-white sm:block">
               Как это работает
             </a>
