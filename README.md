@@ -35,7 +35,7 @@
 
 ## Два трека
 
-- **Android-оверлей (APK 1.8)** — `/install`: любая игра, без root, но с задержкой и без доступа к движку.
+- **Android-оверлей (APK 1.9)** — `/install`: любая игра, без root, но с задержкой и без доступа к движку.
 - **Unity-пакет (1.6)** — `/unity`: сеть внутри рендера, реальная экономия пикселей и FPS.
 
 Подробнее: [`docs/BAZARFX_ROADMAP.md`](docs/BAZARFX_ROADMAP.md).
@@ -47,10 +47,10 @@
 
 | Что | Прямое скачивание | CDN (если GitHub зависает) |
 | --- | --- | --- |
-| Android APK 1.8 | https://github.com/Aleksandr-pro/aktobe-bazar/raw/apk-1.8/integrations/android/BazarFX.apk | https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.8/integrations/android/BazarFX.apk |
+| Android APK 1.9 | https://github.com/Aleksandr-pro/aktobe-bazar/raw/apk-1.9/integrations/android/BazarFX.apk | https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.9/integrations/android/BazarFX.apk |
 | Unity-пакет 1.6 | https://github.com/Aleksandr-pro/aktobe-bazar/raw/unity-1.6/integrations/unity/BazarFX-Neural.unitypackage | https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@unity-1.6/integrations/unity/BazarFX-Neural.unitypackage |
 
-Версии фиксируются тегами (`apk-1.8`, `unity-1.6`), поэтому ссылки не меняются
+Версии фиксируются тегами (`apk-1.9`, `unity-1.6`), поэтому ссылки не меняются
 после следующих релизов. Артефакты лежат рядом с исходниками:
 `integrations/android/BazarFX.apk` и `integrations/unity/BazarFX-Neural.unitypackage`.
 
@@ -61,7 +61,7 @@
 
 ```bash
 sha256sum integrations/android/BazarFX.apk integrations/unity/BazarFX-Neural.unitypackage
-# 460709ec3d7f2aa7b421c1c5c7903e56af7515ac1d03afdb9891f717164e9fb9  BazarFX.apk
+# 46b841702bbb0c46ead5d5e3d9ccd8aaa320f2bf60a0977591220b994a88e517  BazarFX.apk
 # 932dbfcacba3ef599f14812c46a5e2df502c676c10eb96e96dcf8ea30af8466e  BazarFX-Neural.unitypackage
 ```
 

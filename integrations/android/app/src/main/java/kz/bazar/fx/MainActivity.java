@@ -242,16 +242,15 @@ public class MainActivity extends Activity {
                         + "мелкие детали. 0% — выключено. Работает только вместе с нейросетью.");
 
         root.addView(checkbox("Дорисовка деталей (вторая сеть)",
-                "Поверх результата апскейлера работает ещё одна свёрточная сеть "
-                        + "(3→8→3 каналов): она добавляет детали, а не размывает их. "
-                        + "Даёт самую «живую» картинку, но нагружает GPU сильнее.",
+                "Свёрточная сеть (3→8→3) работает на полном кадре и добавляет к нему "
+                        + "детали: микрорельеф, границы, мелкие надписи. Не размывает, "
+                        + "не уменьшает разрешение. Нагружает GPU сильнее обычных шейдеров.",
                 settings.enhance,
                 new OnChecked() {
                     @Override
                     public void onChecked(boolean checked) {
                         settings.enhance = checked;
-                        // без апскейлера второй сети нечего исправлять
-                        if (checked) settings.neural = true;
+                        if (!checked) settings.quality = FxSettings.CUSTOM;
                         settings.save(MainActivity.this);
                         pushToService();
                     }
@@ -424,14 +423,19 @@ public class MainActivity extends Activity {
     private void updateStatusText() {
         if (status == null) return;
         boolean overlay = Settings.canDrawOverlays(this);
-        status.setText("Версия 1.6 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
+        status.setText("Версия 1.9 · Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")"
                 + "\nРазрешение «поверх других приложений»: " + (overlay ? "есть" : "нет")
                 + "\nКачество: " + settings.qualityName()
                 + " · сцена " + Math.round(settings.renderScale * 100) + "%"
                 + "\nГенерация кадров: " + (settings.frameGen ? "вкл" : "выкл")
                 + "\nTAA: " + (settings.temporal ? "вкл" : "выкл")
                 + "\nАвто-качество: " + (settings.autoQuality ? "вкл" : "выкл")
-                + "\nСравнение «до/после»: " + (settings.splitCompare ? "вкл" : "выкл"));
+                + "\nСравнение «до/после»: " + (settings.splitCompare ? "вкл" : "выкл")
+                + "\nДорисовка деталей (AI): " + (settings.enhance
+                        ? "вкл · " + Math.round(settings.enhanceStrength * 100) + "%" : "выкл")
+                // Последняя ошибка захвата: без неё пользователь видит только
+                // «эффекта нет», хотя пайплайн вообще не запустился.
+                + "\n\nПоследняя ошибка: " + FxService.lastError);
     }
 
     // ------------------------------------------------------------ UI helpers
@@ -520,7 +524,6 @@ public class MainActivity extends Activity {
         if ("enhanceStrength".equals(key)) {
             settings.enhanceStrength = value;
             settings.enhance = value > 0.01f;
-            if (settings.enhance) settings.neural = true;
             return;
         }
         if ("renderScale".equals(key)) settings.renderScale = Math.max(0.3f, value);

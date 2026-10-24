@@ -236,10 +236,15 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             + "}\n"
             + "void main() {\n"
             + "  vec3 c = clamp(texture(tSrc, vUV).rgb, 0.0, 1.0);\n"
-            + "  float k = uAmount * 0.35;\n"
+            // S-кривая контраста: заметно «дороже» выглядит даже на плоском кадре
+            + "  float k = uAmount * 0.55;\n"
             + "  vec3 s = mix(c, smoothstep(vec3(0.02), vec3(0.98), c), k);\n"
             + "  float l = dot(s, vec3(0.299, 0.587, 0.114));\n"
-            + "  s = mix(vec3(l), s, 1.0 + uAmount * 0.12);\n"
+            // насыщенность + «vibrance»: слабо насыщенные участки подтягиваются
+            // сильнее, уже насыщенные почти не трогаем (без «кислотности»)
+            + "  float sat = max(s.r, max(s.g, s.b)) - min(s.r, min(s.g, s.b));\n"
+            + "  float vib = 1.0 + uAmount * 0.45 * (1.0 - clamp(sat * 2.0, 0.0, 1.0));\n"
+            + "  s = mix(vec3(l), s, vib);\n"
             + "  float n = (hash(vUV * uFullRes + uDither) - 0.5) / 255.0;\n"
             + "  fragColor = vec4(clamp(s + n, 0.0, 1.0), 1.0);\n"
             + "}\n";
@@ -559,6 +564,9 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // --- вторая сеть: «дорисовка» деталей поверх апскейлера
     private int enhConv1Program, enhConv2Program, enhWeightTexture;
     private int enhHiddenFbo, enhHiddenTexA, enhHiddenTexB, enhOutFbo, enhOutTex;
+    private int enhW = 1, enhH = 1;
+    /** Дорисовка работает на полном кадре (без даунскейла) — режим оверлея. */
+    private boolean enhFullRes;
     private int netW = 1, netH = 1;
     private volatile boolean neural;
     private volatile float neuralStrength = 1f;
@@ -635,9 +643,9 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         neural = s.neural;
         neuralStrength = clamp(s.neuralStrength, 0f, 1f);
         netScale = clamp(s.neuralScale, 0.25f, 1f);
-        // Дорисовка имеет смысл только вместе с апскейлером: она обучена
-        // исправлять именно его выход, а не произвольный кадр.
-        enhance = s.enhance && s.neural;
+        // Дорисовка работает и сама по себе — на полном кадре. Это основной
+        // режим для оверлея: апскейлер там нечего восстанавливать.
+        enhance = s.enhance;
         enhanceStrength = clamp(s.enhanceStrength, 0f, 1f);
         if (!s.autoQuality) autoScale = 1f;
         split = s.splitCompare ? 0.5f : 0f;
@@ -1063,8 +1071,8 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // Нейросетевой путь: сеть апскейлит в 2× от низкого разрешения, дальше
             // обычный Catmull-Rom до полного и вся пост-обработка.
             runNeural();
-            // если включена дорисовка — дальше идёт более детальный кадр
-            int stageTex = (enhance && enhOutTex != 0) ? enhOutTex : netOutTex;
+            // если дорисовка идёт в паре с апскейлером — берём её результат
+            int stageTex = (enhance && enhOutTex != 0 && !enhFullRes) ? enhOutTex : netOutTex;
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, upFbo);
             GLES30.glViewport(0, 0, fullW, fullH);
             GLES30.glUseProgram(upscaleProgram);
@@ -1112,6 +1120,14 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             stage = writeTex;
             readHist = readHist == 0 ? 1 : 0;
             historyValid = true;
+        }
+
+        // 3.5. Дорисовка деталей на полном кадре (режим оверлея).
+        // Именно этот путь даёт видимый результат: сеть не «размывает и
+        // восстанавливает» кадр, а добавляет к нему детали и микроконтраст.
+        if (enhance && enhFullRes && enhOutTex != 0) {
+            runEnhance(stage, fullW, fullH);
+            stage = enhOutTex;
         }
 
         // 4. пост-обработка: sharp → clarity → grade, последний проход пишет в финальный буфер
@@ -1396,7 +1412,8 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void allocateNeuralTargets() {
         // Вход сети — доля от полного разрешения: сеть дорогая, гонять её в 1:1 нет смысла.
         // Авто-качество действует и на сеть: если GPU не тянет, вход уменьшается.
-        boolean enhReady = !enhance || enhOutTex != 0;
+        boolean wantFullRes = enhance && !neural;
+        boolean enhReady = !enhance || (enhOutTex != 0 && enhFullRes == wantFullRes);
         netW = Math.max(160, Math.round(fullW * netScale * autoScale));
         netH = Math.max(96, Math.round(fullH * netScale * autoScale));
         if (netW == lowW && netH == lowH && netOutTex != 0 && enhReady) return;
@@ -1424,12 +1441,14 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         netOutTex = createTexture2D(netW * 2, netH * 2, null);
         netOutFbo = createFbo(netOutTex);
 
+        // Дорисовка: без апскейлера — на полном кадре, с апскейлером — на его
+        // выходе. Размер обязан соответствовать режиму, иначе будет пустой кадр.
         if (enhance) {
-            enhHiddenTexA = createTexture2D(netW * 2, netH * 2, null);
-            enhHiddenTexB = createTexture2D(netW * 2, netH * 2, null);
-            enhHiddenFbo = createFbo(enhHiddenTexA, enhHiddenTexB);
-            enhOutTex = createTexture2D(netW * 2, netH * 2, null);
-            enhOutFbo = createFbo(enhOutTex);
+            if (neural) {
+                allocEnhanceBuffers(netW * 2, netH * 2, false);
+            } else {
+                allocEnhanceBuffers(fullW, fullH, true);
+            }
         }
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
@@ -1437,16 +1456,21 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 + (netW * 2) + "x" + (netH * 2));
     }
 
-    /** Прогон второй сети: выход апскейлера → 8 каналов → остаток → enhOutTex. */
-    private void runEnhance() {
-        int w = netW * 2, h = netH * 2;
+    /**
+     * Прогон второй сети: вход → 8 каналов → остаток → enhOutTex.
+     *
+     * Входом может быть как выход апскейлера (низкое разрешение), так и полный
+     * кадр — во втором случае сеть просто уточняет уже готовую картинку, без
+     * «размыть и восстановить».
+     */
+    private void runEnhance(int srcTex, int w, int h) {
 
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, enhHiddenFbo);
         int[] buffers = {GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_COLOR_ATTACHMENT1};
         GLES30.glDrawBuffers(2, buffers, 0);
         GLES30.glViewport(0, 0, w, h);
         GLES30.glUseProgram(enhConv1Program);
-        bindTex(0, netOutTex);
+        bindTex(0, srcTex);
         bindTex(1, enhWeightTexture);
         uniform1i(enhConv1Program, "tSrc", 0);
         uniform1i(enhConv1Program, "tW", 1);
@@ -1457,7 +1481,7 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, enhOutFbo);
         GLES30.glViewport(0, 0, w, h);
         GLES30.glUseProgram(enhConv2Program);
-        bindTex(0, netOutTex);
+        bindTex(0, srcTex);
         bindTex(1, enhHiddenTexA);
         bindTex(2, enhHiddenTexB);
         bindTex(3, enhWeightTexture);
@@ -1469,6 +1493,19 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         uniform1f(enhConv2Program, "uStrength", enhanceStrength);
         draw();
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+    }
+
+    /** Буферы второй сети под конкретный размер входа. */
+    private void allocEnhanceBuffers(int w, int h, boolean fullRes) {
+        enhW = Math.max(2, w);
+        enhH = Math.max(2, h);
+        enhFullRes = fullRes;
+        enhHiddenTexA = createTexture2D(enhW, enhH, null);
+        enhHiddenTexB = createTexture2D(enhW, enhH, null);
+        enhHiddenFbo = createFbo(enhHiddenTexA, enhHiddenTexB);
+        enhOutTex = createTexture2D(enhW, enhH, null);
+        enhOutFbo = createFbo(enhOutTex);
+        FxLog.i("Дорисовка: " + enhW + "x" + enhH + (fullRes ? " (полный кадр)" : " (после апскейла)"));
     }
 
     /** Прогон сети: LR-кадр → 8 каналов → пиксельшуфл 2× → текстура netOutTex. */
@@ -1507,9 +1544,9 @@ public class FxRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         draw();
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
 
-        // 4. вторая сеть: доделываем детали поверх результата апскейлера
-        if (enhance && enhOutTex != 0) {
-            runEnhance();
+        // 4. вторая сеть поверх результата апскейлера (если она того же размера)
+        if (enhance && enhOutTex != 0 && !enhFullRes) {
+            runEnhance(netOutTex, netW * 2, netH * 2);
         }
     }
 

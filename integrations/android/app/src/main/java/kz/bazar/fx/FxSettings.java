@@ -138,7 +138,8 @@ public final class FxSettings {
             case QUALITY_NEURAL:
                 // Сеть сама восстанавливает детали, поэтому агрессивный шарп не нужен:
                 // иначе к «нарисованным» краям добавляются ореолы.
-                renderScale = 0.5f;
+                // В оверлее кадр уже в полном разрешении — уменьшать его вредно.
+                renderScale = 1f;
                 sharpen = 0.35f;
                 clarity = 0.15f;
                 grade = 0.15f;
@@ -151,19 +152,23 @@ public final class FxSettings {
                 neuralScale = 0.36f;
                 break;
             case QUALITY_CINEMA:
-                // Главный режим «ИИ дорисовывает картинку»: апскейлер вытягивает
-                // форму, вторая сеть доделывает детали, тон доводит до «кино».
-                renderScale = 0.5f;
-                sharpen = 0.3f;
-                clarity = 0.25f;
-                grade = 0.45f;
-                temporal = true;
+                // Главный режим «ИИ дорисовывает картинку»: вторая сеть работает
+                // прямо на полном кадре (без даунскейла!) и добавляет детали,
+                // затем тон доводит картинку до «кино».
+                //
+                // Почему без апскейлера: в оверлее кадр уже полноразмерный, и
+                // «уменьшить → восстановить» только мылит. Дорисовка на полном
+                // кадре — единственный путь, где эффект реально видно.
+                renderScale = 1f;
+                sharpen = 0.45f;
+                clarity = 0.45f;
+                grade = 0.5f;
+                temporal = false;   // без motion vectors TAA даёт шлейфы
                 frameGen = false;
-                neural = true;
+                neural = false;
                 enhance = true;
-                neuralStrength = 1f;
                 enhanceStrength = 1f;
-                neuralScale = 0.36f;
+                neuralStrength = 1f;
                 flowStep = 4;
                 flowSearch = 3;
                 flowTaps = 1f;
