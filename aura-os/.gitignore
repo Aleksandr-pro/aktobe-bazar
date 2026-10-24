@@ -1,0 +1,5 @@
+.venv/
+build/
+aura.img
+serial.log
+screenshots/*.ppm
