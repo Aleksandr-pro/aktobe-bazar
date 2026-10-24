@@ -158,20 +158,42 @@ public class FxService extends Service implements FxRenderer.StatsListener {
 
     private boolean starting;
 
+    /** На каком шаге мы находимся: попадает в текст ошибки, чтобы не гадать по логу. */
+    private volatile String step = "старт";
+
     private void startPipeline(int resultCode, Intent data) {
         if (starting || running) return;
         starting = true;
         try {
             startPipelineInternal(resultCode, data);
         } catch (Throwable t) {
-            FxLog.e("startPipeline: " + t, t);
-            notifyFailure("Не удалось начать захват: " + t.getClass().getSimpleName()
-                    + ". Подробности — в логе BazarFX.");
+            FxLog.e("startPipeline на шаге «" + step + "»: " + t, t);
+            lastError = "Шаг «" + step + "»: " + describe(t);
+            notifyFailure("BazarFX: не удалось начать захват.\nШаг: " + step + "\n"
+                    + describe(t) + "\nПодробности — «Лог» в приложении.");
             stopSelf();
         } finally {
             starting = false;
         }
     }
+
+    /** Человеческое описание исключения: класс + сообщение + первая строка стека. */
+    static String describe(Throwable t) {
+        if (t == null) return "неизвестная ошибка";
+        StringBuilder sb = new StringBuilder(t.getClass().getSimpleName());
+        if (t.getMessage() != null && !t.getMessage().isEmpty()) {
+            sb.append(": ").append(t.getMessage());
+        }
+        StackTraceElement[] st = t.getStackTrace();
+        if (st != null && st.length > 0) {
+            sb.append(" [").append(st[0].getClassName()).append('.').append(st[0].getMethodName())
+                    .append(':').append(st[0].getLineNumber()).append(']');
+        }
+        return sb.toString();
+    }
+
+    /** Последняя ошибка — показывается в приложении на экране диагностики. */
+    public static volatile String lastError = "нет";
 
     private void startPipelineInternal(int resultCode, Intent data) {
         MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
@@ -181,7 +203,8 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             return;
         }
 
-        FxLog.i("Шаг 1/4: получаем проекцию экрана");
+        step = "получение проекции";
+        FxLog.i("Шаг 1/5: получаем проекцию экрана");
         try {
             projection = manager.getMediaProjection(resultCode, data);
         } catch (Throwable t) {
@@ -197,6 +220,9 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             return;
         }
 
+        // ВАЖНО (Android 14+): колбэк регистрируем ДО createVirtualDisplay и только
+        // один раз. Повторная регистрация у части прошивок бросает
+        // UnsupportedOperationException прямо из registerCallback.
         projectionCallback = new MediaProjection.Callback() {
             @Override
             public void onStop() {
@@ -209,10 +235,12 @@ public class FxService extends Service implements FxRenderer.StatsListener {
                 });
             }
         };
+        step = "регистрация колбэка проекции";
         try {
             projection.registerCallback(projectionCallback, handler);
         } catch (Throwable t) {
-            FxLog.e("registerCallback: " + t, t);
+            // Не фатально: без колбэка просто не узнаем о системной остановке.
+            FxLog.w("registerCallback не удался (продолжаем): " + describe(t));
         }
 
         // Если уведомления запрещены, кнопок управления не будет вообще —
@@ -225,13 +253,14 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         } catch (Throwable ignored) {
         }
 
-        FxLog.i("Шаг 2/4: показываем оверлей");
+        step = "показ оверлея";
+        FxLog.i("Шаг 2/5: показываем оверлей");
         try {
             showOverlay();
         } catch (Throwable t) {
             FxLog.e("showOverlay: " + t, t);
-            notifyFailure("Не удалось показать оверлей: " + t.getClass().getSimpleName()
-                    + ". Проверь разрешение «поверх других приложений».");
+            notifyFailure("BazarFX: не удалось показать оверлей.\n" + describe(t)
+                    + "\nРазреши «Поверх других приложений» и попробуй снова.");
             stopSelf();
             return;
         }
@@ -239,7 +268,8 @@ public class FxService extends Service implements FxRenderer.StatsListener {
         isRunning = true;
 
         // Ждём, пока GL-поток создаст SurfaceTexture, и только потом создаём VirtualDisplay.
-        FxLog.i("Шаг 3/4: ждём GL-поверхность");
+        step = "ожидание GL-поверхности";
+        FxLog.i("Шаг 3/5: ждём GL-поверхность");
         waitForSurfaceTexture();
     }
 
@@ -709,28 +739,62 @@ public class FxService extends Service implements FxRenderer.StatsListener {
             return;
         }
 
-        try {
-            captureSurface = new Surface(st);
-            activeSurfaceTexture = st;
-            virtualDisplay = projection.createVirtualDisplay(
-                    "BazarFX",
-                    metrics.widthPixels,
-                    metrics.heightPixels,
-                    Math.max(1, metrics.densityDpi),
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
-                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
-                    captureSurface,
-                    null,
-                    handler);
-            renderer.onSurfaceSizeChanged(metrics.widthPixels, metrics.heightPixels);
-            FxLog.i("Шаг 4/4: VirtualDisplay создан: " + metrics.widthPixels + "x" + metrics.heightPixels);
-        } catch (Throwable t) {
-            // SecurityException (повторный захват), IllegalStateException (проекция остановлена)
-            FxLog.e("Не удалось создать VirtualDisplay: " + t, t);
-            notifyFailure("Захват экрана недоступен: " + t.getClass().getSimpleName()
-                    + ". Выключите и включите BazarFX заново.");
-            stopSelf();
+        step = "создание VirtualDisplay";
+
+        // Флаги перебираем от самого совместимого к «как в документации»:
+        // на части прошивок PUBLIC у MediaProjection не поддержан и бросает
+        // UnsupportedOperationException / IllegalArgumentException.
+        int[] flagSets = {
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR
+                        | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+                0,
+        };
+
+        Throwable last = null;
+        for (int flags : flagSets) {
+            try {
+                if (captureSurface == null) {
+                    captureSurface = new Surface(st);
+                }
+                virtualDisplay = projection.createVirtualDisplay(
+                        "BazarFX",
+                        metrics.widthPixels,
+                        metrics.heightPixels,
+                        Math.max(1, metrics.densityDpi),
+                        flags,
+                        captureSurface,
+                        null,
+                        handler);
+                if (virtualDisplay != null) {
+                    activeSurfaceTexture = st;
+                    FxLog.i("Шаг 4/5: VirtualDisplay создан (" + metrics.widthPixels + "x"
+                            + metrics.heightPixels + ", flags=" + flags + ")");
+                    break;
+                }
+            } catch (Throwable t) {
+                last = t;
+                FxLog.w("createVirtualDisplay с flags=" + flags + " не удался: " + describe(t));
+                if (virtualDisplay != null) {
+                    try {
+                        virtualDisplay.release();
+                    } catch (Throwable ignored) {
+                    }
+                    virtualDisplay = null;
+                }
+            }
         }
+
+        if (virtualDisplay == null) {
+            step = "создание VirtualDisplay (все варианты)";
+            FxLog.e("Не удалось создать VirtualDisplay: " + last, last);
+            notifyFailure("BazarFX: система не дала захват экрана.\n" + describe(last)
+                    + "\nВыключи BazarFX и включи заново — токен захвата одноразовый.");
+            stopSelf();
+            return;
+        }
+
+        renderer.onSurfaceSizeChanged(metrics.widthPixels, metrics.heightPixels);
     }
 
     /** Поворот / смена разрешения: только resize, без пересоздания. */

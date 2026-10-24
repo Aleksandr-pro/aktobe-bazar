@@ -39,6 +39,19 @@ from train_sr import (  # noqa: E402
 E_HID = 8   # каналов в скрытом слое второй сети
 
 
+def load_game_frames():
+    """Кадры из игры (свои скриншоты) — сеть должна знать игровой рендер,
+    а не только фотографии из scikit-image."""
+    import glob
+    from PIL import Image
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    frames = []
+    for path in sorted(glob.glob(os.path.join(root, "scripts", "data", "game", "*.jpg"))):
+        frames.append(np.asarray(Image.open(path).convert("RGB")).astype(np.float32) / 255.0)
+    return frames
+
+
+
 # ------------------------------------------------------------ чтение весов SR
 def load_sr_weights(path):
     """Разбирает SRWeights.java → (w1, b1, w2, b2) в форме для numpy."""
@@ -152,7 +165,7 @@ def conv_edge_bwd(dout, cols, w, shape, k):
     return d
 
 
-def degrade(x, rng):
+def degrade(x, rng, p_blur=0.35, p_noise=0.25):
     """Портим вход так, как его портит реальный рендер игры.
 
     Сеть учится не «угадывать» уже восстановленный кадр, а добавлять детали
@@ -160,20 +173,44 @@ def degrade(x, rng):
     """
     out = x.copy()
     # мягкое размытие 3×3 (имитация билинейного апскейла движка)
-    if rng.random() < 0.35:
+    if rng.random() < p_blur:
         k = np.array([0.25, 0.5, 0.25], np.float32)
         out = (out * 0.5
                + 0.25 * np.roll(out, 1, axis=1)
                + 0.25 * np.roll(out, -1, axis=1))
         out = (out * 0.5 + 0.25 * np.roll(out, 1, axis=0) + 0.25 * np.roll(out, -1, axis=0))
     # шум сенсора/компрессии
-    if rng.random() < 0.25:
+    if rng.random() < p_noise:
         out = out + rng.normal(0, rng.uniform(0.002, 0.012), out.shape).astype(np.float32)
     # лёгкая потеря контраста
     if rng.random() < 0.25:
         c = rng.uniform(0.93, 1.0)
         out = 0.5 + (out - 0.5) * c
     return np.clip(out, 0, 1).astype(np.float32)
+
+
+def blur3(x):
+    """Мягкое размытие 3×3 (box) — для оценки высокочастотной части."""
+    p = np.pad(x, ((1, 1), (1, 1), (0, 0)), mode="edge")
+    out = np.zeros_like(x)
+    for dy in range(3):
+        for dx in range(3):
+            out += p[dy:dy + x.shape[0], dx:dx + x.shape[1], :]
+    return out / 9.0
+
+
+def sharpen_target(x, amount=0.9):
+    """Эталон «как должно выглядеть»: резче исходника, но без ореолов.
+
+    Классический unsharp с ограничением: усиливаем только разницу, которая
+    больше шума и меньше резкого перепада. Именно эту картинку мы хотим
+    получить на выходе — «DS ENHANCED» из референса пользователя.
+    """
+    lo = blur3(x)
+    hi = x - lo
+    # мягкий порог: мелкий шум не усиливаем, сильные края не «звеним»
+    gain = np.clip(np.abs(hi) * 6.0, 0.0, 1.0)
+    return np.clip(x + amount * hi * gain, 0, 1).astype(np.float32)
 
 
 # -------------------------------------------------------------------- данные
@@ -196,8 +233,14 @@ def make_pairs(imgs, rng, sr, batch=6, hr=96):
         crop = im[y0:y0 + hr, x0:x0 + hr]
         low = downsample2(crop)
         sr_out = sr_forward(low[None], w1, b1, w2, b2)[0]
-        xs.append(degrade(sr_out, rng))
-        ys.append(crop)
+        # Вход — то, что реально приходит с экрана: либо выход апскейлера,
+        # либо сам кадр игры (режим оверлея), иногда чуть подпорченный.
+        if rng.random() < 0.5:
+            src_img = sr_out
+        else:
+            src_img = crop[:sr_out.shape[0], :sr_out.shape[1]]
+        xs.append(degrade(src_img, rng, p_blur=0.25, p_noise=0.2))
+        ys.append(sharpen_target(crop)[:src_img.shape[0], :src_img.shape[1]])
     # выравниваем по минимальному размеру (пиксельшуфл может дать на 1 больше)
     hh = min(a.shape[0] for a in xs)
     ww = min(a.shape[1] for a in xs)
@@ -230,6 +273,11 @@ def main():
     rng = np.random.default_rng(1)
     imgs = load_images()
     print(f"изображений для обучения: {len(imgs)}", flush=True)
+    game = load_game_frames()
+    if game:
+        # кадры игры повторяем: домен важнее, чем количество фотографий
+        imgs = imgs + game * 4
+        print(f"кадров из игры: {len(game)} (×4 в выборке)", flush=True)
 
     w1 = (rng.standard_normal((C_IN * TAPS, E_HID)) * np.sqrt(2.0 / (C_IN * TAPS))).astype(np.float32)
     b1 = np.zeros(E_HID, np.float32)
@@ -293,10 +341,12 @@ def main():
             vres = conv_edge_fwd(vh, w2, b2, K)[0].reshape(1, hh, ww, 3)
             vout = np.clip(v_sr + vres[0], 0, 1)
             bic = np.repeat(np.repeat(downsample2(v), 2, axis=0), 2, axis=1)
+            dan = lambda z: float(np.abs(np.diff(z, axis=0)).mean() + np.abs(np.diff(z, axis=1)).mean())
             print(f"step {step:5d}  L1={l1:.4f}  grad={gl:.4f}  "
                   f"PSNR: билинейно={psnr(bic[:ref.shape[0], :ref.shape[1]], ref):.2f}  "
                   f"апскейлер={psnr(v_sr, ref):.2f}  "
-                  f"апскейлер+дорисовка={psnr(vout, ref):.2f} дБ", flush=True)
+                  f"апскейлер+дорисовка={psnr(vout, ref):.2f} дБ  "
+                  f"детали: апскейлер={dan(v_sr):.4f} → с дорисовкой={dan(vout):.4f}", flush=True)
 
     export(w1, b1, w2, b2, root)
 
