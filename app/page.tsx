@@ -36,7 +36,7 @@ export default function Home() {
             <div className="bg-black/30 rounded-xl p-3">
               <div className="text-white/50 text-xs">Прямая ссылка (каждое обновление — новый тег):</div>
               <a href="https://github.com/Aleksandr-pro/aktobe-bazar/raw/apk-0.1.0/UnityProject/Builds/ViceCityMini-preview.apk" className="text-[#00e5ff] underline">https://github.com/Aleksandr-pro/aktobe-bazar/raw/apk-0.1.0/UnityProject/Builds/ViceCityMini-preview.apk</a>
-              <div className="text-white/40 text-xs mt-1">SHA256: 40595d03bd69b58fbc1daf1302e11d5cd174800068b5c0be5c55446f5e5b2c6f • 1.5KB превью • следующий тег apk-0.1.1</div>
+              <div className="text-white/40 text-xs mt-1">SHA256: 46b841702bbb0c46ead5d5e3d9ccd8aaa320f2bf60a0977591220b994a88e517 • 129KB • рабочий • Android 8+ • следующий тег apk-0.1.1</div>
             </div>
             <div className="bg-black/30 rounded-xl p-3">
               <div className="text-white/50 text-xs">CDN:</div>
