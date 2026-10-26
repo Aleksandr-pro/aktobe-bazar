@@ -1,101 +1,67 @@
-# GTA 6 Mini — Vice City 1×1 км (Unity, для телефона)
+# GTA 6 Mini — Vice City 1×1 км (Unity 6000 LTS, ARM ASR)
 
-> **Не веб.** Полноценный Unity-проект под Android (Samsung Galaxy A15 и выше), с фотореалистичной графикой и собственной технологией апскейла **AEM / BazarFX**.
+> Мобильная GTA на Unity для **Samsung Galaxy A15 (Mali-G57)** с **ARM Accuracy Super Resolution** — официальная DLSS для телефона от Arm.
 
-**Вес:** до 4+ ГБ (текстуры 2K/4K, интерьеры, Addressables). На слабом A15 тянет за счёт AEM: рендерим в 50% и восстанавливаем нейросетью.
+**Вес:** 4+ ГБ (Addressables). Улица AAA, интерьер проще (гибрид). На A15 — 30-40 FPS за счёт ARM ASR: рендерим 720p → апскейлим до 1080p.
 
-## Почему не веб и не Unreal
+## Что за ARM (не AEM)
 
-- **Unreal** — отказались (ты так и сказал). Тяжёлый для A15, большой рантайм, сложнее апскейл.
-- **Веб (Three.js)** — удалён. Не вытянет 4 ГБ и фотореализм на Mali.
-- **Unity 6000 LTS + URP** — выбрано: самый фотореалистичный вариант **без Unreal**, отлично на Android, можно сделать гибрид (улица AAA, интерьер проще), легко встроить AEM.
+**ARM ASR** — Accuracy Super Resolution от Arm, на основе AMD FSR2 2.2.2, оптимизировано для мобилок.
+- Temporal upscaler (2 кадра + motion vectors + depth) → чётче FSR1/GSR (ветки, сетки, движение).
+- Бенч Arm на Immortalis-G720 2800×1260:
+  - **+53% FPS vs native** (19→36 FPS в демо Mori)
+  - **-20% энергопотребления**, +17% быстрее FSR2
+  - 1.5× = 44% пикселей, 1.7× = 35%, 2.0× = 25%
+- MIT open-source, работает на любом GPU (Adreno/Mali/Apple) + Vulkan / GLES 3.2
+- Плагины: Unreal 5.3-5.5 уже на Fab, **Unity — обещан Arm "позже 2025"**, Generic Library доступна сейчас.
 
-Движок лежит в `UnityProject/` — открой его Unity 6000 LTS.
+Почему не BazarFX/AEM: старый BazarFX — наш кастом (3→8→12, 443 веса), но ARM ASR — индустриальный стандарт, уже в Fortnite Mobile, оптимизирован под Mali.
 
-## Что такое AEM (наша DLSS)
+## Как подключим
 
-Старая наработка из этого репозитория (`BazarFX`):
+**Путь сейчас:** Generic Library + Tight Integration (Vulkan) → URP Renderer Feature. Подробно: `docs/ARM_ASR_GUIDE.md`
 ```
-сцена 50% → нейросеть 3→8→12 (апскейл x2) → дорисовка 3→8→3 (детали) → экран 100%
+UnityProject/ThirdParty/ArmASR/ ← git clone https://github.com/arm/accuracy-super-resolution-generic-library
+UnityProject/Assets/Scripts/Graphics/ArmASR/ArmAsrManager.cs → jitter + mipBias + dispatch
+UnityProject/Assets/Scripts/Graphics/ArmASR/ArmAsrFeature.cs → URP Feature (до PostProcess)
 ```
-- Обучена на кадрах игры + фото, упакована в 443 веса → текстура 111 текселей.
-- В Unity работает как `Renderer Feature` + два compute-шейдера (уже в `Assets/Scripts/Graphics/AEM/` и `Assets/Shaders/`).
-- На A15 даёт **+40-60% FPS**: рендерим 540p → показываем 1080p без мыла (Catmull-Rom + TAA + шарп уже внутри).
+**Пресет для A15:** `Quality 1.5×` (renderScale 0.66, 720→1080) — лучший баланс. Per-frame cost ~3-4 мс на G720.
 
-Доки: `docs/AEM_GUIDE.md` — как включить, пресеты.
+## Город 1×1 км
 
-## Город 1×1 км — подтверждено
+5 районов, 28+ зданий, нескучные дороги (кольцо, диагональ Vice Ave, прибрежный S-изгиб, хайвей-петля, 3 шортката):
+- **Пляж:** пирс 80м, Beach Club, 2 кафе
+- **Casino Row:** 3 казино (Diamond/Eclipse/Vice Star), 2 клуба (Neon Paradise/La Nuit)
+- **Downtown:** банк 48м, мэрия, 2 башни, кольцо 28м
+- **Commercial:** 2 супермаркета, 6 магазинов, заправка, больница
+- **Residential:** 2 школы, гараж, парк
 
-**5 районов, 28+ зданий, нескучные дороги** (кольцо, диагональ Vice Ave, прибрежный изгиб, хайвей-петля, 3 шортката):
+Координаты: `UnityProject/Assets/Scripts/City/CityData.cs` + `docs/CITY_MAP.md`
 
-| Район | Что внутри |
-|-------|------------|
-| **Пляж** | Пирс 80м, Beach Club, 2 кафе, пальмы, песок |
-| **Casino Row** | 3 казино (Diamond/Eclipse/Vice Star), 2 клуба (Neon Paradise/La Nuit), отель |
-| **Downtown** | Банк Vice Mutual (колонны, ограбления), мэрия, 2 башни, полиция, кольцо |
-| **Commercial** | 2 супермаркета, 6 магазинов, заправка, больница |
-| **Residential** | 2 школы, гараж игрока, парк, дома |
-
-Полная карта с координатами: `UnityProject/Assets/Scripts/City/CityData.cs` и `docs/CITY_MAP.md`.
-
-## Структура репозитория
+## Структура
 
 ```
-UnityProject/                          ← ОТКРЫВАТЬ В UNITY 6000 LTS
-  Assets/
-    Scenes/City_1x1.unity              — главная сцена (заглушка, генерируется)
-    Scripts/
-      Core/GameManager.cs             — состояние, деньги, звёзды
-      Player/PlayerController.cs      — 3-е лицо, бег/прыжок (потом 1-е)
-      Vehicle/VehicleController.cs    — физика авто, сесть/выйти
-      City/CityData.cs                — координаты всех зданий/дорог
-      City/CityBuilder.cs             — спавнит город из префабов
-      Graphics/AEM/AEMUpscaler.cs     — наша нейросеть-апскейл
-      UI/HUD.cs / Minimap.cs
-    Prefabs/Buildings/                — 28 префабов (пока боксы, потом AAA модели)
-    Prefabs/Vehicles/                 — 4 авто + скутер
-    Settings/URP-High/Medium/Low     — 3 пресета качества (для A15 = Medium)
-    Addressables/                     — текстуры 2K/4K, интерьеры казино (4ГБ)
-  Packages/manifest.json
-  ProjectSettings/
+UnityProject/ ← открывать в Unity 6000 LTS (Android Vulkan)
+  Assets/Scripts/City/CityData.cs, CityBuilder.cs
+  Assets/Scripts/Graphics/ArmASR/ArmAsrManager.cs, ArmAsrFeature.cs
+  Assets/Shaders/AEM/ (устарело, будет заменено на Arm ASR compute)
+  ThirdParty/ArmASR/README.md ← инструкция клона
+  Packages/manifest.json (URP 17, Addressables, Cinemachine, NavMesh)
 docs/
-  GDD.md                              — гейм-дизайн
-  CITY_MAP.md                         — карта с координатами
-  AEM_GUIDE.md                        — как работает апскейл на A15
-  BUILD_ANDROID.md                    — как собрать APK/AAB 4ГБ
-  GRAPHICS_HYBRID.md                  — фотореализм без Unreal (материалы, свет)
-app/                                  — лендинг сайта (Next.js, не игра! только страница "Скачать APK")
-  page.tsx                            — лендинг с QR на APK
-  download/route.ts                   — отдаёт APK
+  ARM_ASR_GUIDE.md — интеграция на A15
+  CITY_MAP.md, GDD.md, BUILD_ANDROID.md, GRAPHICS_HYBRID.md
+app/ — лендинг "Скачать APK" (Next.js, не игра)
 ```
 
-## Быстрый старт (Unity)
+## Быстрый старт
 
-1. Установи **Unity Hub → Unity 6000.0 LTS (Android Build Support)**
-2. `Open Project` → выбери `UnityProject`
-3. `File → Build Settings → Android` → `Switch Platform`
-4. `Window → Addressables → Build` (соберёт 4ГБ ассеты)
-5. `Build and Run` на Samsung A15 (включи отладку USB)
+1. Unity Hub → Unity 6000.0 LTS + Android Build Support (Vulkan)
+2. Open `UnityProject`
+3. `ThirdParty/ArmASR/README.md` → `git clone` либы
+4. `File → Build Settings → Android → Switch`
+5. `Window → Addressables → Build`
+6. `ArmAsrManager` → ApplyQualityForA15() → Quality 1.5×
+7. Build and Run на A15 (USB debug)
 
-Без Unity — смотри доки и лендинг: `npm install && npm run dev` → `http://localhost:3000`
-
-## Пресеты качества (для твоего A15)
-
-В `Settings/`:
-- **High (PC/флагман):** 1080p native, тени 2048, SSR, AO, все эффекты
-- **Medium (A15, рекомендовано):** 540p + AEM x2 → 1080p, тени 1024, без SSR, LOD
-- **Low (бюджет):** 360p + AEM x2 → 720p, тени 512, упрощённые материалы
-
-Переключатель в игре: `Настройки → Графика`.
-
-## Сайт (не игра)
-
-`app/page.tsx` — просто лендинг "Скачать APK", QR, скриншоты. Сама игра — только в `UnityProject/`.
-
-## Документация
-
-- `docs/GDD.md` — что играем, миссии, экономика
-- `docs/CITY_MAP.md` — схема 1×1 км с координатами
-- `docs/AEM_GUIDE.md` — AEM на A15, цифры FPS
-- `docs/BUILD_ANDROID.md` — сборка 4ГБ APK + OBB/Play Asset Delivery
+Без Unity — `npm run dev` для лендинга.
 
