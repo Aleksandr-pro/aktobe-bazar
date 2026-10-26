@@ -10,7 +10,7 @@
 
 > После каждого апдейта ссылка меняется только тегом (`apk-0.1.1`, `apk-0.2.0` ...). Старые не ломаются.
 
-**Вес:** превью 1.5КБ (заглушка), полный 4+ ГБ (Addressables) — собирается в Unity 6000 LTS + NDK. На A15 — 30-40 FPS с ARM ASR (720p→1080p).
+**Вес:** превью 129КБ (рабочий, подпись v2/v3, Android 8+), полный 4+ ГБ (Addressables) — собирается в Unity 6000 LTS + NDK. На A15 — 30-40 FPS с ARM ASR (720p→1080p).
 
 ## ARM ASR
 Основа — AMD FSR2 2.2.2 → Arm Mali оптимизация, +53% FPS, -20% энергии. Подключается как URP Feature (Generic Library уже в `ThirdParty/ArmASR/`). Подробно: `docs/ARM_ASR_GUIDE.md`.
@@ -25,7 +25,7 @@
 ## Проверка
 ```
 sha256sum UnityProject/Builds/ViceCityMini-preview.apk
-# 40595d03bd69b58fbc1daf1302e11d5cd174800068b5c0be5c55446f5e5b2c6f  preview 0.1.0
+# 46b841702bbb0c46ead5d5e3d9ccd8aaa320f2bf60a0977591220b994a88e517  preview 0.1.0 (рабочий, 129КБ)
 ```
 
 ## Структура
