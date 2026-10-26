@@ -1,68 +1,67 @@
-# Aktobe Bazar
+# GTA 6 Mini — Vice City 1×1 км (Unity 6000 LTS, ARM ASR)
 
-Региональная платформа объявлений для Актюбинской области.
+> Мобильная GTA на Unity для **Samsung Galaxy A15 (Mali-G57)** с **ARM Accuracy Super Resolution** — официальная DLSS для телефона от Arm.
 
-## Стек
-- Next.js 15 (App Router)
-- TypeScript
-- Tailwind CSS
-- Prisma + PostgreSQL (планируется)
+**Вес:** 4+ ГБ (Addressables). Улица AAA, интерьер проще (гибрид). На A15 — 30-40 FPS за счёт ARM ASR: рендерим 720p → апскейлим до 1080p.
 
-## BazarFX
-Рендер-технология «DLSS для Android»: апскейл из низкого разрешения + temporal
-сглаживание + генерация кадров. Работает с любым источником кадров — движком,
-видео или захватом экрана.
+## Что за ARM (не AEM)
 
-**Как попробовать:**
-1. `npm install && npm run dev` → открой `/fx` (на телефоне — в Chrome).
-2. Кнопка «Установить на телефон» ставит страницу как приложение (PWA, полноэкранно).
-3. Вкладка «Своё видео» — загрузи запись игры и сравни половинки экрана.
+**ARM ASR** — Accuracy Super Resolution от Arm, на основе AMD FSR2 2.2.2, оптимизировано для мобилок.
+- Temporal upscaler (2 кадра + motion vectors + depth) → чётче FSR1/GSR (ветки, сетки, движение).
+- Бенч Arm на Immortalis-G720 2800×1260:
+  - **+53% FPS vs native** (19→36 FPS в демо Mori)
+  - **-20% энергопотребления**, +17% быстрее FSR2
+  - 1.5× = 44% пикселей, 1.7× = 35%, 2.0× = 25%
+- MIT open-source, работает на любом GPU (Adreno/Mali/Apple) + Vulkan / GLES 3.2
+- Плагины: Unreal 5.3-5.5 уже на Fab, **Unity — обещан Arm "позже 2025"**, Generic Library доступна сейчас.
 
-**Код:** `lib/fx/` (движок и шейдеры), `components/fx/FxDemo.tsx` (демо),
-`integrations/unity/` (шейдер + компонент для Unity),
-`integrations/android/` (готовый APK + исходники: фоновый режим поверх любых игр),
-описание — [docs/BAZARFX.md](docs/BAZARFX.md).
+Почему не BazarFX/AEM: старый BazarFX — наш кастом (3→8→12, 443 веса), но ARM ASR — индустриальный стандарт, уже в Fortnite Mobile, оптимизирован под Mali.
 
-**APK:** `integrations/android/BazarFX.apk` (69 КБ, Android 8+, без root).
+## Как подключим
 
-Прямые ссылки на скачивание:
+**Путь сейчас:** Generic Library + Tight Integration (Vulkan) → URP Renderer Feature. Подробно: `docs/ARM_ASR_GUIDE.md`
+```
+UnityProject/ThirdParty/ArmASR/ ← git clone https://github.com/arm/accuracy-super-resolution-generic-library
+UnityProject/Assets/Scripts/Graphics/ArmASR/ArmAsrManager.cs → jitter + mipBias + dispatch
+UnityProject/Assets/Scripts/Graphics/ArmASR/ArmAsrFeature.cs → URP Feature (до PostProcess)
+```
+**Пресет для A15:** `Quality 1.5×` (renderScale 0.66, 720→1080) — лучший баланс. Per-frame cost ~3-4 мс на G720.
 
-* страница установки с QR-кодом — `/install`
-* файл с сайта — `/BazarFX.apk`
-* зеркало на GitHub — https://github.com/Aleksandr-pro/aktobe-bazar/raw/main/integrations/android/BazarFX.apk
+## Город 1×1 км
 
-**Проверки:** `npm run check:types`, `npm run check:shaders`, `npm run check:engine`, `npm run check:apk`.
+5 районов, 28+ зданий, нескучные дороги (кольцо, диагональ Vice Ave, прибрежный S-изгиб, хайвей-петля, 3 шортката):
+- **Пляж:** пирс 80м, Beach Club, 2 кафе
+- **Casino Row:** 3 казино (Diamond/Eclipse/Vice Star), 2 клуба (Neon Paradise/La Nuit)
+- **Downtown:** банк 48м, мэрия, 2 башни, кольцо 28м
+- **Commercial:** 2 супермаркета, 6 магазинов, заправка, больница
+- **Residential:** 2 школы, гараж, парк
 
-## Два трека
+Координаты: `UnityProject/Assets/Scripts/City/CityData.cs` + `docs/CITY_MAP.md`
 
-- **Android-оверлей (APK 1.9)** — `/install`: любая игра, без root, но с задержкой и без доступа к движку.
-- **Unity-пакет (1.6)** — `/unity`: сеть внутри рендера, реальная экономия пикселей и FPS.
+## Структура
 
-Подробнее: [`docs/BAZARFX_ROADMAP.md`](docs/BAZARFX_ROADMAP.md).
-
-## Прямые ссылки на файлы (всегда из репозитория)
-
-Правило проекта: в ответах и документации сначала даём **прямые ссылки на файлы
-в этом репозитории**, а сайт и CDN — только как запасные варианты.
-
-| Что | Прямое скачивание | CDN (если GitHub зависает) |
-| --- | --- | --- |
-| Android APK 1.9 | https://github.com/Aleksandr-pro/aktobe-bazar/raw/apk-1.9/integrations/android/BazarFX.apk | https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@apk-1.9/integrations/android/BazarFX.apk |
-| Unity-пакет 1.6 | https://github.com/Aleksandr-pro/aktobe-bazar/raw/unity-1.6/integrations/unity/BazarFX-Neural.unitypackage | https://cdn.jsdelivr.net/gh/Aleksandr-pro/aktobe-bazar@unity-1.6/integrations/unity/BazarFX-Neural.unitypackage |
-
-Версии фиксируются тегами (`apk-1.9`, `unity-1.6`), поэтому ссылки не меняются
-после следующих релизов. Артефакты лежат рядом с исходниками:
-`integrations/android/BazarFX.apk` и `integrations/unity/BazarFX-Neural.unitypackage`.
-
-Загрузка вложений в GitHub Releases недоступна (uploads.github.com блокируется),
-поэтому файлы в репозитории, а не в Assets релиза.
-
-Проверка целостности:
-
-```bash
-sha256sum integrations/android/BazarFX.apk integrations/unity/BazarFX-Neural.unitypackage
-# 46b841702bbb0c46ead5d5e3d9ccd8aaa320f2bf60a0977591220b994a88e517  BazarFX.apk
-# 932dbfcacba3ef599f14812c46a5e2df502c676c10eb96e96dcf8ea30af8466e  BazarFX-Neural.unitypackage
+```
+UnityProject/ ← открывать в Unity 6000 LTS (Android Vulkan)
+  Assets/Scripts/City/CityData.cs, CityBuilder.cs
+  Assets/Scripts/Graphics/ArmASR/ArmAsrManager.cs, ArmAsrFeature.cs
+  Assets/Shaders/AEM/ (устарело, будет заменено на Arm ASR compute)
+  ThirdParty/ArmASR/README.md ← инструкция клона
+  Packages/manifest.json (URP 17, Addressables, Cinemachine, NavMesh)
+docs/
+  ARM_ASR_GUIDE.md — интеграция на A15
+  CITY_MAP.md, GDD.md, BUILD_ANDROID.md, GRAPHICS_HYBRID.md
+app/ — лендинг "Скачать APK" (Next.js, не игра)
 ```
 
-Разбор для конкретной игры (CounterFlame): [`docs/COUNTERFLAME.md`](docs/COUNTERFLAME.md).
+## Быстрый старт
+
+1. Unity Hub → Unity 6000.0 LTS + Android Build Support (Vulkan)
+2. Open `UnityProject`
+3. `ThirdParty/ArmASR/README.md` → `git clone` либы
+4. `File → Build Settings → Android → Switch`
+5. `Window → Addressables → Build`
+6. `ArmAsrManager` → ApplyQualityForA15() → Quality 1.5×
+7. Build and Run на A15 (USB debug)
+
+Без Unity — `npm run dev` для лендинга.
+
