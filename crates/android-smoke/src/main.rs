@@ -23,7 +23,7 @@ async fn main() {
         clear_background(Color::new(0.10, 0.35, 0.75, 1.0));
         draw_text("VOXEL SMOKE OK", 40.0, 120.0, 48.0, WHITE);
         draw_text(
-            &format!("frames: {frames}  fps: {}", get_fps()),
+            format!("frames: {frames}  fps: {}", get_fps()),
             40.0,
             190.0,
             28.0,
