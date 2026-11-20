@@ -146,9 +146,12 @@ jobs:
             unzip -p "$apk" "$so" > /tmp/app.so
             readelf="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
             [ -x "$readelf" ] || readelf=readelf
-            jni=$("$readelf" --dyn-syms /tmp/app.so | grep -ac "Java_quad_native" || true)
-            echo "::warning title=JNI symbols found::$jni"
-            "$readelf" --dyn-syms /tmp/app.so | grep -a "Java_quad_native" | awk '{print $8}' | head -n 4 | tr '\n' ' ' > /tmp/jni-names.txt
+            "$readelf" --dyn-syms /tmp/app.so > /tmp/dynsyms.txt 2>&1 || true
+            total=$(grep -ac "" /tmp/dynsyms.txt || true)
+            jni=$(grep -ac "Java_" /tmp/dynsyms.txt || true)
+            quad=$(grep -ac "quad_main" /tmp/dynsyms.txt || true)
+            echo "::warning title=dynamic symbols::total=$total java=$jni quad_main=$quad"
+            grep -a "Java_" /tmp/dynsyms.txt | awk '{print $8}' | head -n 6 | tr '\n' ' ' > /tmp/jni-names.txt
             echo "::warning title=JNI names::$(cat /tmp/jni-names.txt)"
             needed=$("$readelf" -d /tmp/app.so | grep -a NEEDED | tr -s ' ' | tr '\n' ' ')
             echo "::warning title=NEEDED libraries::${needed:-none}"
