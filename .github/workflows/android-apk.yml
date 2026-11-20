@@ -190,7 +190,11 @@ jobs:
 
   emulator-smoke:
     name: Launch APK on an Android emulator
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[emulator]')
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || contains(github.event.head_commit.message, '[emulator]')
+      || contains(github.event.pull_request.title, '[emulator]')
+      || contains(github.event.pull_request.body, '[emulator]')
     needs: build-apk
     runs-on: ubuntu-latest
     timeout-minutes: 40
