@@ -2,6 +2,11 @@ name: Native Android APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/**"
+      - ".github/workflows/android-apk.yml"
   push:
     branches: [main]
     paths:
@@ -16,44 +21,127 @@ jobs:
   build-apk:
     name: Build native Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+
+      - name: Configure JDK
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust Android target
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
-      - uses: android-actions/setup-android@v3
-      - uses: Swatinem/rust-cache@v2
-      - name: Install Android SDK and NDK packages
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare Android SDK and NDK
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install \
+          set -euo pipefail
+          echo "SDK root: $ANDROID_HOME"
+          ls -1 "$ANDROID_HOME" || true
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            sdkmanager="$(command -v sdkmanager || true)"
+          fi
+          if [ -z "$sdkmanager" ]; then
+            echo "sdkmanager not found under $ANDROID_HOME" >&2
+            exit 1
+          fi
+          yes | "$sdkmanager" --sdk_root="$ANDROID_HOME" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;27.2.12479018"
-          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          if [ ! -d "$ndk" ]; then
+            ndk="$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d | sort | tail -n 1)"
+          fi
+          test -d "$ndk"
+          echo "NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+          clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+          test -x "$clang"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=$clang" >> "$GITHUB_ENV"
+          echo "Using NDK: $ndk"
+
+      - name: Add NDK toolchain compatibility wrappers
+        run: |
+          set -euo pipefail
+          trap 'echo "::error title=NDK wrappers::$BASH_COMMAND"' ERR
+          bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "NDK bin: $bin"
+          ls -1 "$bin" | sed -n '1,40p'
+          for tool in ar ranlib nm strip objdump readelf; do
+            target="$bin/aarch64-linux-android-$tool"
+            if [ ! -e "$target" ] && [ -e "$bin/llvm-$tool" ]; then
+              ln -s "llvm-$tool" "$target"
+            fi
+          done
+          prebuilt="$(dirname "$bin")"
+          unwind="$(find "$prebuilt" -name 'libunwind.a' -path '*aarch64*' -print 2>/dev/null | sort | head -n 1)"
+          test -n "$unwind"
+          unwind_dir="$(dirname "$unwind")"
+          echo "libunwind directory: $unwind_dir"
+          if [ ! -e "$bin/aarch64-linux-android-ld" ]; then
+            {
+              echo "#!/bin/sh"
+              echo "exec \"$bin/ld.lld\" -L\"$unwind_dir\" \"\$@\""
+            } > "$bin/aarch64-linux-android-ld"
+            chmod +x "$bin/aarch64-linux-android-ld"
+            cat "$bin/aarch64-linux-android-ld"
+          fi
+          ls -1 "$unwind_dir"
+
       - name: Install cargo-quad-apk
-        run: cargo install cargo-quad-apk --locked
+        run: |
+          set -o pipefail
+          if ! cargo install --git https://github.com/not-fl3/cargo-quad-apk --locked --force 2>&1 | tee /tmp/quad-apk-install.log; then
+            echo "git install failed, falling back to the published crate"
+            cargo install cargo-quad-apk --locked --force 2>&1 | tee -a /tmp/quad-apk-install.log
+          fi
+          cargo quad-apk --version || true
+
       - name: Build release APK
         working-directory: crates/mobile-game
-        run: cargo quad-apk build --release
+        run: |
+          set -o pipefail
+          cargo quad-apk build --release 2>&1 | tee /tmp/android-build.log
+
+      - name: Report failure log
+        if: failure()
+        run: |
+          for log in /tmp/android-build.log /tmp/quad-apk-install.log; do
+            [ -f "$log" ] || continue
+            chunk="$(tail -c 3000 "$log" | tr '\n' '|' | sed 's/::/:/g')"
+            echo "::error title=$log::${chunk:-empty}"
+          done
+
       - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: project-voxel-android-${{ github.sha }}
           path: target/android-artifacts/release/apk/*.apk
           if-no-files-found: error
           retention-days: 14
+
       - name: Publish downloadable alpha APK
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           apk=$(find target/android-artifacts/release/apk -maxdepth 1 -type f -name '*.apk' -print -quit)
           test -n "$apk"
           cp "$apk" project-voxel-android.apk
