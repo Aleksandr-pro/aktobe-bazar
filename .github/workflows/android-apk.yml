@@ -1,7 +1,7 @@
 name: Native Android APK
 
-# Emulator runs are opt-in: put [emulator] in the commit message.
-
+# Emulator runs are opt-in: add the `run-emulator` label to a pull request or
+# put [emulator] in the commit message.
 on:
   workflow_dispatch:
   pull_request:
@@ -36,7 +36,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Rust Android target
+      - name: Install Rust Android targets
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: armv7-linux-androideabi,aarch64-linux-android,x86_64-linux-android
@@ -48,7 +48,6 @@ jobs:
         run: |
           set -euo pipefail
           echo "SDK root: $ANDROID_HOME"
-          ls -1 "$ANDROID_HOME" || true
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -x "$sdkmanager" ]; then
             sdkmanager="$(command -v sdkmanager || true)"
@@ -71,10 +70,6 @@ jobs:
           echo "NDK_HOME=$ndk" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
-          clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
-          test -x "$clang"
-          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$clang" >> "$GITHUB_ENV"
-          echo "CC_aarch64_linux_android=$clang" >> "$GITHUB_ENV"
           echo "Using NDK: $ndk"
 
       - name: Add NDK toolchain compatibility wrappers
@@ -119,58 +114,53 @@ jobs:
             echo "git install failed, falling back to the published crate"
             cargo install cargo-quad-apk --locked --force 2>&1 | tee -a /tmp/quad-apk-install.log
           fi
-          cargo quad-apk --version || true
 
-      - name: Build release APK
+      - name: Build game APK
         working-directory: crates/mobile-game
         run: |
           set -o pipefail
           cargo quad-apk build --release 2>&1 | tee /tmp/android-build.log
 
+      - name: Build smoke APK
+        working-directory: crates/android-smoke
+        run: |
+          set -o pipefail
+          cargo quad-apk build --release 2>&1 | tee /tmp/smoke-build.log
+
       - name: Report failure log
         if: failure()
         run: |
-          for log in /tmp/android-build.log /tmp/quad-apk-install.log; do
+          for log in /tmp/android-build.log /tmp/smoke-build.log /tmp/quad-apk-install.log; do
             [ -f "$log" ] || continue
             chunk="$(tail -c 3000 "$log" | tr '\n' '|' | sed 's/::/:/g')"
             echo "::error title=$log::${chunk:-empty}"
           done
 
-      - name: Inspect packaged APK
+      - name: Inspect packaged APKs
+        if: success()
         run: |
           set -euo pipefail
-          apk=$(find target/android-artifacts/release/apk -maxdepth 1 -name '*.apk' -print -quit)
-          test -n "$apk"
+          readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           aapt2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
-          "$aapt2" dump badging "$apk" > /tmp/badging.txt 2>&1 || true
-          badging=$(grep -aE "package:|launchable-activity|sdkVersion|native-code|uses-feature" /tmp/badging.txt | tr '\n' '|' | sed 's/::/:/g' | tail -c 900)
-          echo "::warning title=aapt2 badging::${badging:-no badging output}"
-          entries=$(unzip -l "$apk" | awk 'NR>3 {print $4}' | grep -aE "^(lib/|classes|AndroidManifest|resources)" | tr '\n' ' ')
-          echo "::warning title=APK entries::${entries:-empty}"
-          so=$(unzip -l "$apk" | awk 'NR>3 {print $4}' | grep -aE "^lib/arm64-v8a/.*\.so$" | head -n 1 || true)
-          echo "::warning title=native library::${so:-missing}"
-          if [ -n "$so" ]; then
-            unzip -p "$apk" "$so" > /tmp/app.so
-            readelf="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-            [ -x "$readelf" ] || readelf=readelf
-            "$readelf" --dyn-syms /tmp/app.so > /tmp/dynsyms.txt 2>&1 || true
-            total=$(grep -ac "" /tmp/dynsyms.txt || true)
-            jni=$(grep -ac "Java_" /tmp/dynsyms.txt || true)
-            quad=$(grep -ac "quad_main" /tmp/dynsyms.txt || true)
-            echo "::warning title=dynamic symbols::total=$total java=$jni quad_main=$quad"
-            grep -a "Java_" /tmp/dynsyms.txt | awk '{print $8}' | head -n 6 | tr '\n' ' ' > /tmp/jni-names.txt
-            echo "::warning title=JNI names::$(cat /tmp/jni-names.txt)"
-            align=$("$readelf" -l /tmp/app.so | grep -a "LOAD" | awk '{print $NF}' | sort -u | tr '\n' ' ')
-            echo "::warning title=native library LOAD alignment::${align:-unknown}"
-            needed=$("$readelf" -d /tmp/app.so | grep -a NEEDED | tr -s ' ' | tr '\n' ' ')
-            echo "::warning title=NEEDED libraries::${needed:-none}"
-          fi
-          if unzip -p "$apk" classes.dex > /tmp/classes.dex 2>/dev/null; then
-            names=$(strings -a /tmp/classes.dex | grep -aiE "project|voxel|quad|MainActivity" | sort -u | head -n 12 | tr '\n' ' ')
-            echo "::warning title=dex strings::${names:-none}"
-          fi
+          shopt -s nullglob
+          for apk in target/android-artifacts/release/apk/*.apk; do
+            name=$(basename "$apk" .apk)
+            echo "inspecting $apk"
+            "$aapt2" dump badging "$apk" > /tmp/badging.txt 2>&1 || true
+            badging=$(grep -aE "package:|launchable-activity|native-code" /tmp/badging.txt | tr '\n' '|' | sed 's/::/:/g' | tail -c 500)
+            echo "::warning title=$name badging::${badging:-no badging output}"
+            entries=$(unzip -l "$apk" | awk 'NR>3 {print $4}' | grep -aE "^(lib/|classes|AndroidManifest|resources)" | tr '\n' ' ')
+            echo "::warning title=$name entries::${entries:-empty}"
+            for so in $(unzip -l "$apk" | awk 'NR>3 {print $4}' | grep -aE "^lib/.*\.so$"); do
+              unzip -p "$apk" "$so" > /tmp/app.so
+              align=$("$readelf" -l /tmp/app.so | grep -a "LOAD" | awk '{print $NF}' | sort -u | tr '\n' ' ')
+              jni=$("$readelf" --dyn-syms /tmp/app.so | grep -ac "Java_" || true)
+              quad=$("$readelf" --dyn-syms /tmp/app.so | grep -ac "quad_main" || true)
+              echo "::warning title=$name $so::align=${align:-unknown} jni=$jni quad_main=$quad"
+            done
+          done
 
-      - name: Upload APK artifact
+      - name: Upload APK artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -179,17 +169,27 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish downloadable alpha APK
+      - name: Publish downloadable APKs
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          apk=$(find target/android-artifacts/release/apk -maxdepth 1 -type f -name '*.apk' -print -quit)
-          test -n "$apk"
-          cp "$apk" project-voxel-android.apk
+          shopt -s nullglob
+          apks=(target/android-artifacts/release/apk/*.apk)
+          test ${#apks[@]} -gt 0
+          mkdir -p publish
+          for apk in "${apks[@]}"; do
+            base=$(basename "$apk" .apk)
+            case "$base" in
+              *smoke*) name=project-voxel-smoke.apk ;;
+              *) name=project-voxel-android.apk ;;
+            esac
+            cp "$apk" "publish/$name"
+          done
+          ls -l publish
           tag="mobile-alpha-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" project-voxel-android.apk \
+          gh release create "$tag" publish/*.apk \
             --target "$GITHUB_SHA" \
             --title "Project Voxel Android alpha ${GITHUB_RUN_NUMBER}" \
             --notes "Native Android alpha build from ${GITHUB_SHA}." \
@@ -214,10 +214,9 @@ jobs:
       - name: Locate APK
         id: apk
         run: |
-          apk=$(find artifacts -name '*.apk' -print -quit)
+          apk=$(find artifacts -name '*mobile*.apk' -print -quit)
           test -n "$apk"
           echo "path=$apk" >> "$GITHUB_OUTPUT"
-          unzip -l "$apk" | grep -E "lib/|classes.dex" | sed -n '1,20p'
       - name: Boot emulator and launch the app
         uses: reactivecircus/android-emulator-runner@v2
         env:
@@ -241,7 +240,7 @@ jobs:
       - name: Report emulator result
         if: always()
         run: |
-          summary=$(grep -aiE "projectvoxel|SAPP|FATAL|AndroidRuntime|UnsatisfiedLink|linker|panicked|RustAndroid|DEBUG|miniquad" /tmp/logcat.txt 2>/dev/null | tail -c 3200 | tr '\n' '|' | sed 's/::/:/g' || true)
+          summary=$(grep -aiE "projectvoxel|SAPP|FATAL|AndroidRuntime|UnsatisfiedLink|linker|panicked|DEBUG" /tmp/logcat.txt 2>/dev/null | tail -c 3200 | tr '\n' '|' | sed 's/::/:/g' || true)
           install=$(tail -c 600 /tmp/install.txt 2>/dev/null | tr '\n' '|' | sed 's/::/:/g' || true)
           start=$(tail -c 900 /tmp/start.txt 2>/dev/null | tr '\n' '|' | sed 's/::/:/g' || true)
           echo "::warning title=adb install::${install:-no install output}"

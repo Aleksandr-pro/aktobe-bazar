@@ -1,4 +1,6 @@
+use std::any::Any;
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use macroquad::models::{draw_mesh, Mesh, Vertex};
 use macroquad::prelude::*;
@@ -396,6 +398,97 @@ fn apply_block_action(
         .is_some_and(|previous| !previous.is_solid() && previous != selected)
 }
 
+/// Streaming, physics and block edits for one frame.
+///
+/// Kept in its own struct so the frame can be wrapped in `catch_unwind` with a
+/// single value, and so a phone-only panic turns into an on-screen message.
+struct Simulation<'a> {
+    world: &'a mut World,
+    player: &'a mut Player,
+    meshes: &'a mut HashMap<ChunkPos, ChunkRender>,
+    streamed_center: &'a mut ChunkPos,
+    spawned: &'a mut bool,
+}
+
+impl Simulation<'_> {
+    fn step(&mut self, input: &FrameInput, selected_slot: usize, delta_time: f32) {
+        let center = self.player.chunk_position();
+        if center != *self.streamed_center {
+            self.world
+                .stream_around(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL);
+            for position in
+                self.world
+                    .unload_outside(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL)
+            {
+                self.meshes.remove(&position);
+            }
+            *self.streamed_center = center;
+        }
+        if !*self.spawned && self.world.loaded_chunk_count() > 0 {
+            *self.player = Player::spawn(self.world);
+            *self.spawned = true;
+        }
+
+        self.player.update(self.world, input, delta_time);
+        let selected_block = [Block::Grass, Block::Soil, Block::Stone][selected_slot];
+        apply_block_action(self.world, self.player, input, selected_block);
+        rebuild_chunk_meshes(self.world, self.meshes, REMESH_BUDGET);
+    }
+}
+
+fn describe_panic(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic payload".to_owned()
+    }
+}
+
+/// Print a caught panic on screen so a phone-only crash becomes readable.
+fn draw_fatal_overlay(message: &str) {
+    let width = screen_width();
+    let height = screen_height();
+    draw_rectangle(0.0, 0.0, width, height, Color::new(0.06, 0.02, 0.03, 0.92));
+    draw_text(
+        "GAME ERROR",
+        28.0,
+        56.0,
+        34.0,
+        Color::new(1.0, 0.55, 0.5, 1.0),
+    );
+    let mut y = 100.0;
+    for line in wrap_text(message, 46) {
+        draw_text(&line, 28.0, y, 22.0, WHITE);
+        y += 30.0;
+        if y > height - 40.0 {
+            break;
+        }
+    }
+}
+
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if !current.is_empty() && current.len() + 1 + word.len() > width {
+            lines.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::from("(empty panic message)"));
+    }
+    lines
+}
+
 fn draw_touch_ui(input: &FrameInput, selected_slot: usize, status: &str) {
     let width = screen_width();
     let height = screen_height();
@@ -511,6 +604,8 @@ async fn main() {
     let mut selected_slot = 0_usize;
     let mut meshes: HashMap<ChunkPos, ChunkRender> = HashMap::new();
     let mut streamed_center = spawn_chunk;
+    let mut spawned = false;
+    let mut fatal: Option<String> = None;
 
     loop {
         let delta_time = get_frame_time().min(0.05);
@@ -519,21 +614,21 @@ async fn main() {
             selected_slot = slot;
         }
 
-        let center = player.chunk_position();
-        if center != streamed_center {
-            world.stream_around(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL);
-            for position in
-                world.unload_outside(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL)
-            {
-                meshes.remove(&position);
+        if fatal.is_none() {
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                let mut simulation = Simulation {
+                    world: &mut world,
+                    player: &mut player,
+                    meshes: &mut meshes,
+                    streamed_center: &mut streamed_center,
+                    spawned: &mut spawned,
+                };
+                simulation.step(&input, selected_slot, delta_time);
+            }));
+            if let Err(payload) = outcome {
+                fatal = Some(describe_panic(payload.as_ref()));
             }
-            streamed_center = center;
         }
-
-        player.update(&world, &input, delta_time);
-        let selected_block = [Block::Grass, Block::Soil, Block::Stone][selected_slot];
-        apply_block_action(&mut world, &player, &input, selected_block);
-        rebuild_chunk_meshes(&mut world, &mut meshes, REMESH_BUDGET);
 
         clear_background(Color::new(0.44, 0.70, 0.88, 1.0));
         let eye = player.eye_position();
@@ -553,6 +648,12 @@ async fn main() {
             }
         }
         set_default_camera();
+
+        if let Some(message) = &fatal {
+            draw_fatal_overlay(message);
+            next_frame().await;
+            continue;
+        }
 
         let status = format!(
             "chunks {}  meshes {}  x {:.1}  z {:.1}  y {:.1}  fps {}",
