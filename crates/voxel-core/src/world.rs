@@ -342,9 +342,11 @@ mod tests {
         let mut world = World::new(3);
         world.stream_around(ChunkPos::new(0, 0, 0), 2, 0, 0);
         assert_eq!(world.loaded_chunk_count(), 25);
+        // A 3x3 ring around (2, 0) covers x in 1..=3, but only x = 1..=2 and
+        // z = -1..=1 exist inside the streamed area, so six chunks survive.
         let removed = world.unload_outside(ChunkPos::new(2, 0, 0), 1, 0, 0);
-        assert_eq!(removed.len(), 25 - 9);
-        assert_eq!(world.loaded_chunk_count(), 9);
+        assert_eq!(removed.len(), 19);
+        assert_eq!(world.loaded_chunk_count(), 6);
         assert!(world.chunk(ChunkPos::new(0, 0, 0)).is_none());
         assert!(world.chunk(ChunkPos::new(2, 0, 0)).is_some());
     }
