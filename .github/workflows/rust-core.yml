@@ -17,7 +17,15 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: |
+          if cargo fmt --all -- --check > /tmp/rustfmt.log 2>&1; then
+            cat /tmp/rustfmt.log
+          else
+            cat /tmp/rustfmt.log
+            encoded=$(base64 -w0 /tmp/rustfmt.log)
+            echo "::error title=rustfmt diff::$encoded"
+            exit 1
+          fi
       - name: Run unit tests
         run: cargo test --workspace
       - name: Run Clippy

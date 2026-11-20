@@ -18,12 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build release APK with Android NDK
-        run: >-
-          docker run --rm
-          -v "${{ github.workspace }}:/root/src"
-          -w /root/src/crates/mobile-game
-          notfl3/cargo-apk
-          cargo quad-apk build --release
+        run: |
+          if docker run --rm \
+            -v "${{ github.workspace }}:/root/src" \
+            -w /root/src/crates/mobile-game \
+            notfl3/cargo-apk \
+            cargo quad-apk build --release > /tmp/android-build.log 2>&1; then
+            cat /tmp/android-build.log
+          else
+            cat /tmp/android-build.log
+            encoded=$(base64 -w0 /tmp/android-build.log)
+            echo "::error title=Android build log::$encoded"
+            exit 1
+          fi
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
