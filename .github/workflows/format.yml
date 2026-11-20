@@ -1,0 +1,45 @@
+name: Format branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to format (never main)
+        required: false
+        type: string
+  push:
+    branches-ignore: [main]
+    paths:
+      - "crates/**"
+      - ".github/workflows/format.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    name: Apply rustfmt
+    if: github.event.inputs.branch != 'main' && github.ref_name != 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
+          token: ${{ github.token }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format and push when changed
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          git config user.name "format-bot"
+          git config user.email "format-bot@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "already formatted"
+            exit 0
+          fi
+          git add -A
+          git commit -m "Apply rustfmt"
+          git push origin "HEAD:${{ github.event.inputs.branch || github.ref_name }}"

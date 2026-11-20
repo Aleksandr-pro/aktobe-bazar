@@ -2,14 +2,22 @@ use std::collections::HashMap;
 
 use macroquad::models::{draw_mesh, Mesh, Vertex};
 use macroquad::prelude::*;
-use voxel_core::{
-    build_surface_mesh, raycast_chunk, Block, Chunk, ChunkNeighbors, MeshData, CHUNK_SIZE,
-};
+use voxel_core::{Block, ChunkPos, MeshData, World, CHUNK_EDGE, CHUNK_SIZE};
 
 const SEED: u64 = 0xA17_0BE;
 const PLAYER_RADIUS: f32 = 0.28;
 const PLAYER_HEIGHT: f32 = 1.72;
 const INTERACTION_DISTANCE: f32 = 5.0;
+/// Radius of the streamed chunk ring around the player, in chunks.
+const RENDER_RADIUS: i32 = 3;
+/// Vertical chunk level that holds the generated terrain.
+const SURFACE_LEVEL: i32 = 0;
+/// World height that always counts as solid, so the prototype cannot dig a
+/// hole straight into the void.
+const BEDROCK_HEIGHT: i32 = 1;
+/// How many chunk meshes are rebuilt per frame, keeping streaming smooth on
+/// low-end phones instead of stalling for a whole ring at once.
+const REMESH_BUDGET: usize = 8;
 
 fn window_conf() -> Conf {
     Conf {
@@ -118,19 +126,15 @@ struct Player {
 }
 
 impl Player {
-    fn spawn(chunk: &Chunk) -> Self {
-        let x = 8.5;
-        let z = 8.5;
-        let surface_y = (0..CHUNK_SIZE)
+    fn spawn(world: &World) -> Self {
+        let x = 8;
+        let z = 8;
+        let surface = (0..CHUNK_SIZE as i32)
             .rev()
-            .find(|&y| {
-                chunk
-                    .get(x as usize, y, z as usize)
-                    .is_some_and(Block::is_solid)
-            })
+            .find(|&y| world.is_solid(x, y, z))
             .unwrap_or(0);
         Self {
-            position: vec3(x, surface_y as f32 + 1.02, z + 3.0),
+            position: vec3(x as f32 + 0.5, surface as f32 + 1.05, z as f32 + 0.5),
             vertical_velocity: 0.0,
             yaw: std::f32::consts::PI,
             pitch: -0.12,
@@ -151,7 +155,7 @@ impl Player {
         self.position + vec3(0.0, 1.52, 0.0)
     }
 
-    fn update(&mut self, chunk: &Chunk, input: &FrameInput, delta_time: f32) {
+    fn update(&mut self, world: &World, input: &FrameInput, delta_time: f32) {
         self.yaw -= input.look_delta.x * 0.006;
         self.pitch = (self.pitch - input.look_delta.y * 0.005).clamp(-1.25, 1.25);
 
@@ -163,11 +167,11 @@ impl Player {
         }
         let horizontal_step = movement * (4.0 * delta_time);
         let try_x = self.position + vec3(horizontal_step.x, 0.0, 0.0);
-        if !collides(chunk, try_x) {
+        if !collides(world, try_x) {
             self.position.x = try_x.x;
         }
         let try_z = self.position + vec3(0.0, 0.0, horizontal_step.z);
-        if !collides(chunk, try_z) {
+        if !collides(world, try_z) {
             self.position.z = try_z.z;
         }
 
@@ -178,7 +182,7 @@ impl Player {
         self.vertical_velocity -= 19.0 * delta_time;
         let next_y = self.position.y + self.vertical_velocity * delta_time;
         let candidate = vec3(self.position.x, next_y, self.position.z);
-        if collides(chunk, candidate) {
+        if collides(world, candidate) {
             if self.vertical_velocity < 0.0 {
                 self.position.y = next_y.floor() + 1.0;
                 self.grounded = true;
@@ -192,21 +196,29 @@ impl Player {
             self.grounded = false;
         }
 
-        // Keep the prototype playable if the player walks off the small test island.
+        // Keep the prototype playable if the player falls through a hole.
         if self.position.y < -8.0 {
-            *self = Self::spawn(chunk);
+            *self = Self::spawn(world);
         }
+    }
+
+    fn chunk_position(&self) -> ChunkPos {
+        ChunkPos::new(
+            (self.position.x.floor() as i32).div_euclid(CHUNK_EDGE),
+            SURFACE_LEVEL,
+            (self.position.z.floor() as i32).div_euclid(CHUNK_EDGE),
+        )
     }
 }
 
-fn collides(chunk: &Chunk, position: Vec3) -> bool {
+fn collides(world: &World, position: Vec3) -> bool {
     for x_offset in [-PLAYER_RADIUS, PLAYER_RADIUS] {
         for z_offset in [-PLAYER_RADIUS, PLAYER_RADIUS] {
             let x = (position.x + x_offset).floor() as i32;
             let z = (position.z + z_offset).floor() as i32;
             let feet = (position.y + 0.03).floor() as i32;
             let head = (position.y + PLAYER_HEIGHT - 0.03).floor() as i32;
-            if block_is_solid(chunk, x, feet, z) || block_is_solid(chunk, x, head, z) {
+            if block_is_solid(world, x, feet, z) || block_is_solid(world, x, head, z) {
                 return true;
             }
         }
@@ -214,17 +226,14 @@ fn collides(chunk: &Chunk, position: Vec3) -> bool {
     false
 }
 
-fn block_is_solid(chunk: &Chunk, x: i32, y: i32, z: i32) -> bool {
-    let chunk_range = 0..CHUNK_SIZE as i32;
-    if !chunk_range.contains(&x) || !chunk_range.contains(&y) || !chunk_range.contains(&z) {
-        return false;
+fn block_is_solid(world: &World, x: i32, y: i32, z: i32) -> bool {
+    if y < BEDROCK_HEIGHT {
+        return true;
     }
-    chunk
-        .get(x as usize, y as usize, z as usize)
-        .is_some_and(Block::is_solid)
+    world.is_solid(x, y, z)
 }
 
-fn build_render_mesh(data: &MeshData) -> Mesh {
+fn build_render_mesh(data: &MeshData, offset: [f32; 3]) -> Mesh {
     let vertices = data
         .vertices
         .iter()
@@ -242,9 +251,9 @@ fn build_render_mesh(data: &MeshData) -> Mesh {
                 _ => 0.88,
             };
             let position = vec3(
-                f32::from(vertex.position[0]),
-                f32::from(vertex.position[1]),
-                f32::from(vertex.position[2]),
+                f32::from(vertex.position[0]) + offset[0],
+                f32::from(vertex.position[1]) + offset[1],
+                f32::from(vertex.position[2]) + offset[2],
             );
             Vertex::new2(
                 position,
@@ -261,8 +270,36 @@ fn build_render_mesh(data: &MeshData) -> Mesh {
     }
 }
 
+/// Rebuild a bounded number of dirty chunk meshes so streaming stays smooth.
+fn rebuild_chunk_meshes(world: &mut World, meshes: &mut HashMap<ChunkPos, Mesh>, budget: usize) {
+    let dirty = world.take_dirty();
+    let mut built = 0;
+    for position in dirty {
+        if built >= budget {
+            world.mark_dirty(position);
+            continue;
+        }
+        match world.mesh(position) {
+            Some(data) if !data.indices.is_empty() => {
+                let origin = position.origin();
+                let offset = [origin[0] as f32, origin[1] as f32, origin[2] as f32];
+                meshes.insert(position, build_render_mesh(&data, offset));
+                built += 1;
+            }
+            Some(_) => {
+                meshes.remove(&position);
+                built += 1;
+            }
+            None => {
+                meshes.remove(&position);
+                built += 1;
+            }
+        }
+    }
+}
+
 fn apply_block_action(
-    chunk: &mut Chunk,
+    world: &mut World,
     player: &Player,
     input: &FrameInput,
     selected: Block,
@@ -273,8 +310,7 @@ fn apply_block_action(
     let eye = player.eye_position();
     let origin = [eye.x, eye.y, eye.z];
     let direction = player.forward();
-    let Some(hit) = raycast_chunk(
-        chunk,
+    let Some(hit) = world.raycast(
         origin,
         [direction.x, direction.y, direction.z],
         INTERACTION_DISTANCE,
@@ -282,58 +318,47 @@ fn apply_block_action(
         return false;
     };
 
-    let target = if input.mine {
-        hit.position
-    } else {
-        if hit.normal == [0, 0, 0] {
+    if input.mine {
+        if hit.position[1] < BEDROCK_HEIGHT {
             return false;
         }
-        [
-            hit.position[0] + i32::from(hit.normal[0]),
-            hit.position[1] + i32::from(hit.normal[1]),
-            hit.position[2] + i32::from(hit.normal[2]),
-        ]
-    };
-    let chunk_range = 0..CHUNK_SIZE as i32;
-    if target
-        .iter()
-        .any(|coordinate| !chunk_range.contains(coordinate))
-    {
+        return world
+            .set_block(
+                hit.position[0],
+                hit.position[1],
+                hit.position[2],
+                Block::Air,
+            )
+            .is_some_and(Block::is_solid);
+    }
+
+    if hit.normal == [0, 0, 0] {
         return false;
     }
-
-    if input.place {
-        let block_position = vec3(target[0] as f32, target[1] as f32, target[2] as f32);
-        let player_min = player.position;
-        let player_max = player.position + vec3(0.0, PLAYER_HEIGHT, 0.0);
-        let intersects_player = block_position.x < player_max.x + PLAYER_RADIUS
-            && block_position.x + 1.0 > player_min.x - PLAYER_RADIUS
-            && block_position.y < player_max.y
-            && block_position.y + 1.0 > player_min.y
-            && block_position.z < player_max.z + PLAYER_RADIUS
-            && block_position.z + 1.0 > player_min.z - PLAYER_RADIUS;
-        if intersects_player {
-            return false;
-        }
-        return chunk.set(
-            target[0] as usize,
-            target[1] as usize,
-            target[2] as usize,
-            selected,
-        ) == Some(Block::Air);
+    let target = [
+        hit.position[0] + i32::from(hit.normal[0]),
+        hit.position[1] + i32::from(hit.normal[1]),
+        hit.position[2] + i32::from(hit.normal[2]),
+    ];
+    if target[1] < BEDROCK_HEIGHT {
+        return false;
     }
-
-    chunk
-        .set(
-            target[0] as usize,
-            target[1] as usize,
-            target[2] as usize,
-            Block::Air,
-        )
-        .is_some_and(Block::is_solid)
+    let block_position = vec3(target[0] as f32, target[1] as f32, target[2] as f32);
+    let player_min = player.position;
+    let player_max = player.position + vec3(0.0, PLAYER_HEIGHT, 0.0);
+    let intersects_player = block_position.x < player_max.x + PLAYER_RADIUS
+        && block_position.x + 1.0 > player_min.x - PLAYER_RADIUS
+        && block_position.y < player_max.y
+        && block_position.y + 1.0 > player_min.y
+        && block_position.z < player_max.z + PLAYER_RADIUS
+        && block_position.z + 1.0 > player_min.z - PLAYER_RADIUS;
+    if intersects_player {
+        return false;
+    }
+    world.set_block(target[0], target[1], target[2], selected) == Some(Block::Air)
 }
 
-fn draw_touch_ui(input: &FrameInput, selected_slot: usize) {
+fn draw_touch_ui(input: &FrameInput, selected_slot: usize, status: &str) {
     let width = screen_width();
     let height = screen_height();
     let joystick_center = vec2(102.0, height - 112.0);
@@ -394,6 +419,7 @@ fn draw_touch_ui(input: &FrameInput, selected_slot: usize) {
         15.0,
         WHITE,
     );
+    draw_text(status, 22.0, 84.0, 15.0, WHITE);
     draw_line(
         width * 0.5 - 8.0,
         height * 0.5,
@@ -437,11 +463,15 @@ fn draw_action_button(center: Vec2, label: &str, color: Color) {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    let mut chunk = Chunk::generate(SEED, 0, 0, 0);
-    let mut player = Player::spawn(&chunk);
+    let mut world = World::new(SEED);
+    let spawn_chunk = ChunkPos::new(0, SURFACE_LEVEL, 0);
+    world.stream_around(spawn_chunk, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL);
+    let mut player = Player::spawn(&world);
     let mut touch_tracker = TouchTracker::default();
     let mut selected_slot = 0_usize;
-    let mut scene = build_render_mesh(&build_surface_mesh(&chunk, &ChunkNeighbors::default()));
+    let mut meshes: HashMap<ChunkPos, Mesh> = HashMap::new();
+    let mut streamed_center = spawn_chunk;
+    rebuild_chunk_meshes(&mut world, &mut meshes, usize::MAX);
 
     loop {
         let delta_time = get_frame_time().min(0.05);
@@ -450,11 +480,21 @@ async fn main() {
             selected_slot = slot;
         }
 
-        player.update(&chunk, &input, delta_time);
-        let selected_block = [Block::Grass, Block::Soil, Block::Stone][selected_slot];
-        if apply_block_action(&mut chunk, &player, &input, selected_block) {
-            scene = build_render_mesh(&build_surface_mesh(&chunk, &ChunkNeighbors::default()));
+        let center = player.chunk_position();
+        if center != streamed_center {
+            world.stream_around(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL);
+            for position in
+                world.unload_outside(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL)
+            {
+                meshes.remove(&position);
+            }
+            streamed_center = center;
         }
+
+        player.update(&world, &input, delta_time);
+        let selected_block = [Block::Grass, Block::Soil, Block::Stone][selected_slot];
+        apply_block_action(&mut world, &player, &input, selected_block);
+        rebuild_chunk_meshes(&mut world, &mut meshes, REMESH_BUDGET);
 
         clear_background(Color::new(0.44, 0.70, 0.88, 1.0));
         let eye = player.eye_position();
@@ -465,9 +505,21 @@ async fn main() {
             fovy: 68.0,
             ..Default::default()
         });
-        draw_mesh(&scene);
+        for mesh in meshes.values() {
+            draw_mesh(mesh);
+        }
         set_default_camera();
-        draw_touch_ui(&input, selected_slot);
+
+        let status = format!(
+            "chunks {}  meshes {}  x {:.1}  z {:.1}  y {:.1}  fps {}",
+            world.loaded_chunk_count(),
+            meshes.len(),
+            player.position.x,
+            player.position.z,
+            player.position.y,
+            get_fps()
+        );
+        draw_touch_ui(&input, selected_slot, &status);
         next_frame().await;
     }
 }

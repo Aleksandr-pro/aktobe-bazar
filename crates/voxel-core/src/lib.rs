@@ -3,6 +3,10 @@
 //! This crate intentionally has no engine or platform dependencies so the same
 //! deterministic world rules can be used by Android, iOS, desktop tools, and tests.
 
+mod world;
+
+pub use world::{chunk_local, ChunkPos, World, CHUNK_EDGE};
+
 /// Number of blocks along each edge of a chunk.
 pub const CHUNK_SIZE: usize = 16;
 /// Number of blocks stored by one chunk.
@@ -317,6 +321,28 @@ pub fn raycast_chunk(
     direction: [f32; 3],
     max_distance: f32,
 ) -> Option<BlockHit> {
+    march_ray(origin, direction, max_distance, |cell| {
+        if cell.iter().any(|&value| !(0..CHUNK_EDGE).contains(&value)) {
+            return None;
+        }
+        chunk.get(cell[0] as usize, cell[1] as usize, cell[2] as usize)
+    })
+}
+
+/// Shared voxel DDA used by chunk-space and world-space raycasts.
+///
+/// `sample` returns the block at a voxel, or `None` when the ray has left the
+/// sampled region. The returned distance is measured from `origin` to the
+/// entry point of the hit voxel.
+pub(crate) fn march_ray<F>(
+    origin: [f32; 3],
+    direction: [f32; 3],
+    max_distance: f32,
+    mut sample: F,
+) -> Option<BlockHit>
+where
+    F: FnMut([i32; 3]) -> Option<Block>,
+{
     if !max_distance.is_finite()
         || max_distance < 0.0
         || origin.iter().any(|v| !v.is_finite())
@@ -340,15 +366,11 @@ pub fn raycast_chunk(
         origin[1].floor() as i32,
         origin[2].floor() as i32,
     ];
-    let chunk_range = 0..CHUNK_SIZE as i32;
     let mut normal = [0_i8; 3];
     let mut distance = 0.0_f32;
 
     loop {
-        if cell.iter().any(|&v| !chunk_range.contains(&v)) {
-            return None;
-        }
-        let block = chunk.get(cell[0] as usize, cell[1] as usize, cell[2] as usize)?;
+        let block = sample(cell)?;
         if block.is_solid() {
             return Some(BlockHit {
                 position: cell,
