@@ -23,7 +23,7 @@ jobs:
             -v "${{ github.workspace }}:/root/src" \
             -w /root/src/crates/mobile-game \
             notfl3/cargo-apk \
-            bash -lc 'set -e; yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"; cargo quad-apk build --release' \
+            bash -lc 'set -e; sdkmanager=$(find /opt -type f -name sdkmanager | head -n 1); test -n "$sdkmanager"; yes | "$sdkmanager" --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;36.0.0"; cargo quad-apk build --release' \
             > /tmp/android-build.log 2>&1; then
             cat /tmp/android-build.log
           else
