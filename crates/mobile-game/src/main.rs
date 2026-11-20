@@ -159,13 +159,16 @@ impl Player {
         self.yaw -= input.look_delta.x * 0.006;
         self.pitch = (self.pitch - input.look_delta.y * 0.005).clamp(-1.25, 1.25);
 
+        let swimming = is_liquid_at(world, self.position)
+            || is_liquid_at(world, self.position + vec3(0.0, PLAYER_HEIGHT, 0.0));
         let forward = vec3(self.yaw.sin(), 0.0, self.yaw.cos());
         let right = vec3(-self.yaw.cos(), 0.0, self.yaw.sin());
         let mut movement = right * input.movement.x + forward * input.movement.y;
         if movement.length_squared() > 1.0 {
             movement = movement.normalize();
         }
-        let horizontal_step = movement * (4.0 * delta_time);
+        let speed = if swimming { 2.6 } else { 4.0 };
+        let horizontal_step = movement * (speed * delta_time);
         let try_x = self.position + vec3(horizontal_step.x, 0.0, 0.0);
         if !collides(world, try_x) {
             self.position.x = try_x.x;
@@ -175,11 +178,19 @@ impl Player {
             self.position.z = try_z.z;
         }
 
-        if input.jump && self.grounded {
-            self.vertical_velocity = 6.2;
-            self.grounded = false;
+        if swimming {
+            if input.jump {
+                self.vertical_velocity = 2.8;
+                self.grounded = false;
+            }
+            self.vertical_velocity = (self.vertical_velocity - 5.0 * delta_time).max(-2.4);
+        } else {
+            if input.jump && self.grounded {
+                self.vertical_velocity = 6.2;
+                self.grounded = false;
+            }
+            self.vertical_velocity -= 19.0 * delta_time;
         }
-        self.vertical_velocity -= 19.0 * delta_time;
         let next_y = self.position.y + self.vertical_velocity * delta_time;
         let candidate = vec3(self.position.x, next_y, self.position.z);
         if collides(world, candidate) {
@@ -226,6 +237,13 @@ fn collides(world: &World, position: Vec3) -> bool {
     false
 }
 
+fn is_liquid_at(world: &World, position: Vec3) -> bool {
+    let x = position.x.floor() as i32;
+    let y = position.y.floor() as i32;
+    let z = position.z.floor() as i32;
+    world.block_or_air(x, y, z).is_liquid()
+}
+
 fn block_is_solid(world: &World, x: i32, y: i32, z: i32) -> bool {
     if y < BEDROCK_HEIGHT {
         return true;
@@ -238,11 +256,13 @@ fn build_render_mesh(data: &MeshData, offset: [f32; 3]) -> Mesh {
         .vertices
         .iter()
         .map(|vertex| {
-            let base = match vertex.block {
-                Block::Grass => [0.28, 0.67, 0.30],
-                Block::Soil => [0.50, 0.32, 0.19],
-                Block::Stone => [0.48, 0.51, 0.56],
-                Block::Air => [0.0, 0.0, 0.0],
+            let (base, alpha) = match vertex.block {
+                Block::Grass => ([0.28, 0.67, 0.30], 1.0),
+                Block::Soil => ([0.50, 0.32, 0.19], 1.0),
+                Block::Stone => ([0.48, 0.51, 0.56], 1.0),
+                Block::Sand => ([0.82, 0.76, 0.52], 1.0),
+                Block::Water => ([0.16, 0.42, 0.78], 0.62),
+                Block::Air => ([0.0, 0.0, 0.0], 0.0),
             };
             let light = match vertex.normal {
                 [0, 1, 0] => 1.0,
@@ -258,7 +278,7 @@ fn build_render_mesh(data: &MeshData, offset: [f32; 3]) -> Mesh {
             Vertex::new2(
                 position,
                 vec2(0.0, 0.0),
-                Color::new(base[0] * light, base[1] * light, base[2] * light, 1.0),
+                Color::new(base[0] * light, base[1] * light, base[2] * light, alpha),
             )
         })
         .collect();
@@ -270,8 +290,18 @@ fn build_render_mesh(data: &MeshData, offset: [f32; 3]) -> Mesh {
     }
 }
 
+/// Opaque terrain plus an optional translucent liquid pass for one chunk.
+struct ChunkRender {
+    opaque: Mesh,
+    liquid: Option<Mesh>,
+}
+
 /// Rebuild a bounded number of dirty chunk meshes so streaming stays smooth.
-fn rebuild_chunk_meshes(world: &mut World, meshes: &mut HashMap<ChunkPos, Mesh>, budget: usize) {
+fn rebuild_chunk_meshes(
+    world: &mut World,
+    meshes: &mut HashMap<ChunkPos, ChunkRender>,
+    budget: usize,
+) {
     let dirty = world.take_dirty();
     let mut built = 0;
     for position in dirty {
@@ -280,10 +310,16 @@ fn rebuild_chunk_meshes(world: &mut World, meshes: &mut HashMap<ChunkPos, Mesh>,
             continue;
         }
         match world.mesh(position) {
-            Some(data) if !data.indices.is_empty() => {
+            Some(mesh) if !mesh.is_empty() => {
                 let origin = position.origin();
                 let offset = [origin[0] as f32, origin[1] as f32, origin[2] as f32];
-                meshes.insert(position, build_render_mesh(&data, offset));
+                let opaque = build_render_mesh(&mesh.opaque, offset);
+                let liquid = if mesh.liquid.is_empty() {
+                    None
+                } else {
+                    Some(build_render_mesh(&mesh.liquid, offset))
+                };
+                meshes.insert(position, ChunkRender { opaque, liquid });
                 built += 1;
             }
             Some(_) => {
@@ -355,7 +391,9 @@ fn apply_block_action(
     if intersects_player {
         return false;
     }
-    world.set_block(target[0], target[1], target[2], selected) == Some(Block::Air)
+    world
+        .set_block(target[0], target[1], target[2], selected)
+        .is_some_and(|previous| !previous.is_solid() && previous != selected)
 }
 
 fn draw_touch_ui(input: &FrameInput, selected_slot: usize, status: &str) {
@@ -443,6 +481,8 @@ fn block_color(block: Block) -> Color {
         Block::Grass => Color::new(0.28, 0.67, 0.30, 1.0),
         Block::Soil => Color::new(0.50, 0.32, 0.19, 1.0),
         Block::Stone => Color::new(0.48, 0.51, 0.56, 1.0),
+        Block::Sand => Color::new(0.82, 0.76, 0.52, 1.0),
+        Block::Water => Color::new(0.16, 0.42, 0.78, 1.0),
         Block::Air => Color::new(0.0, 0.0, 0.0, 0.0),
     }
 }
@@ -469,9 +509,8 @@ async fn main() {
     let mut player = Player::spawn(&world);
     let mut touch_tracker = TouchTracker::default();
     let mut selected_slot = 0_usize;
-    let mut meshes: HashMap<ChunkPos, Mesh> = HashMap::new();
+    let mut meshes: HashMap<ChunkPos, ChunkRender> = HashMap::new();
     let mut streamed_center = spawn_chunk;
-    rebuild_chunk_meshes(&mut world, &mut meshes, usize::MAX);
 
     loop {
         let delta_time = get_frame_time().min(0.05);
@@ -505,8 +544,13 @@ async fn main() {
             fovy: 68.0,
             ..Default::default()
         });
-        for mesh in meshes.values() {
-            draw_mesh(mesh);
+        for chunk in meshes.values() {
+            draw_mesh(&chunk.opaque);
+        }
+        for chunk in meshes.values() {
+            if let Some(liquid) = &chunk.liquid {
+                draw_mesh(liquid);
+            }
         }
         set_default_camera();
 

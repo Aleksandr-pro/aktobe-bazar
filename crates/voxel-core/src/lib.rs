@@ -22,13 +22,21 @@ pub enum Block {
     Grass = 1,
     Soil = 2,
     Stone = 3,
+    Water = 4,
+    Sand = 5,
 }
 
 impl Block {
     /// Whether a block currently prevents movement and ray traversal.
     #[must_use]
     pub const fn is_solid(self) -> bool {
-        !matches!(self, Self::Air)
+        !matches!(self, Self::Air | Self::Water)
+    }
+
+    /// Whether the block is a liquid and should be rendered translucent.
+    #[must_use]
+    pub const fn is_liquid(self) -> bool {
+        matches!(self, Self::Water)
     }
 
     /// Decode a stable block ID, rejecting unknown values instead of silently
@@ -40,6 +48,8 @@ impl Block {
             1 => Some(Self::Grass),
             2 => Some(Self::Soil),
             3 => Some(Self::Stone),
+            4 => Some(Self::Water),
+            5 => Some(Self::Sand),
             _ => None,
         }
     }
@@ -82,32 +92,30 @@ impl Chunk {
         Some(std::mem::replace(&mut self.blocks[index], block))
     }
 
-    /// Generate a deterministic, intentionally simple starter terrain chunk.
-    /// The same seed and chunk coordinates always produce the same block data.
+    /// Generate one chunk of the starter world.
+    ///
+    /// The generator is integer-only and deterministic: the same seed and chunk
+    /// coordinates always produce identical block data. It layers broad hills,
+    /// detail noise, two biomes, sandy beaches, sea-level water and caves.
     #[must_use]
     pub fn generate(seed: u64, chunk_x: i32, chunk_y: i32, chunk_z: i32) -> Self {
         let mut chunk = Self::empty();
-        let world_y_start = i64::from(chunk_y) * CHUNK_SIZE as i64;
-        let world_x_start = i64::from(chunk_x) * CHUNK_SIZE as i64;
-        let world_z_start = i64::from(chunk_z) * CHUNK_SIZE as i64;
+        let origin = [
+            i64::from(chunk_x) * CHUNK_SIZE as i64,
+            i64::from(chunk_y) * CHUNK_SIZE as i64,
+            i64::from(chunk_z) * CHUNK_SIZE as i64,
+        ];
 
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
-                let world_x = world_x_start + x as i64;
-                let world_z = world_z_start + z as i64;
+                let world_x = origin[0] + x as i64;
+                let world_z = origin[2] + z as i64;
                 let surface = terrain_height(seed, world_x, world_z);
+                let biome = biome_at(seed, world_x, world_z);
 
                 for y in 0..CHUNK_SIZE {
-                    let world_y = world_y_start + y as i64;
-                    let block = if world_y > surface {
-                        Block::Air
-                    } else if world_y == surface {
-                        Block::Grass
-                    } else if world_y >= surface - 3 {
-                        Block::Soil
-                    } else {
-                        Block::Stone
-                    };
+                    let world_y = origin[1] + y as i64;
+                    let block = terrain_block(seed, biome, world_x, world_y, world_z, surface);
                     let index = (y * CHUNK_SIZE + z) * CHUNK_SIZE + x;
                     chunk.blocks[index] = block;
                 }
@@ -164,6 +172,56 @@ impl MeshData {
     pub fn quad_count(&self) -> usize {
         self.indices.len() / 6
     }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+
+    /// Split a chunk mesh into opaque terrain and translucent liquid geometry
+    /// so the client can draw liquids in a second, blended pass.
+    #[must_use]
+    pub fn split_liquid(&self) -> (Self, Self) {
+        let mut opaque = Self::default();
+        let mut liquid = Self::default();
+        for quad in self.indices.chunks_exact(6) {
+            let first = quad[0] as usize;
+            let is_liquid = self
+                .vertices
+                .get(first)
+                .is_some_and(|vertex| vertex.block.is_liquid());
+            let target = if is_liquid { &mut liquid } else { &mut opaque };
+            let base = target.vertices.len() as u16;
+            if let Some(face) = self.vertices.get(first..first + 4) {
+                target.vertices.extend_from_slice(face);
+            }
+            target
+                .indices
+                .extend(quad.iter().map(|&index| base + (index - quad[0])));
+        }
+        (opaque, liquid)
+    }
+}
+
+/// Opaque and liquid geometry of one chunk.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ChunkMesh {
+    pub opaque: MeshData,
+    pub liquid: MeshData,
+}
+
+impl ChunkMesh {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.opaque.is_empty() && self.liquid.is_empty()
+    }
+}
+
+/// Build both render passes for a chunk in one meshing pass.
+#[must_use]
+pub fn build_chunk_mesh(chunk: &Chunk, neighbors: &ChunkNeighbors<'_>) -> ChunkMesh {
+    let (opaque, liquid) = build_surface_mesh(chunk, neighbors).split_liquid();
+    ChunkMesh { opaque, liquid }
 }
 
 /// Build a culled surface mesh. This first implementation emits one quad per
@@ -176,11 +234,17 @@ pub fn build_surface_mesh(chunk: &Chunk, neighbors: &ChunkNeighbors<'_>) -> Mesh
         for z in 0..CHUNK_SIZE {
             for x in 0..CHUNK_SIZE {
                 let block = chunk.get(x, y, z).expect("loop coordinates are in bounds");
-                if !block.is_solid() {
+                if block == Block::Air {
                     continue;
                 }
                 for face in Face::ALL {
-                    if sample_face_neighbor(chunk, neighbors, x, y, z, face).is_solid() {
+                    let neighbor = sample_face_neighbor(chunk, neighbors, x, y, z, face);
+                    let hidden = if block.is_liquid() {
+                        neighbor != Block::Air
+                    } else {
+                        neighbor.is_solid()
+                    };
+                    if hidden {
                         continue;
                     }
                     append_face(&mut mesh, x, y, z, block, face);
@@ -429,18 +493,85 @@ fn axis_boundary_distance(origin: f32, direction: f32, cell: i32) -> f32 {
     (boundary - origin) / direction
 }
 
-/// Integer-only terrain function: deliberately stable across platforms and
-/// independent of floating-point implementation details.
-fn terrain_height(seed: u64, x: i64, z: i64) -> i64 {
-    let mut value = seed
-        ^ (x as u64).wrapping_mul(0x9E37_79B1_85EB_CA87)
-        ^ (z as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+/// Sea level of the starter world, in world blocks.
+pub const SEA_LEVEL: i64 = 8;
+
+/// Low-frequency surface variation used to pick a block palette.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Biome {
+    /// Grass and soil, the default look of the starter world.
+    Meadow,
+    /// Sand and bare sand layers, used for dry regions and beaches.
+    Dunes,
+}
+
+/// Integer-only 64-bit mixer; keeps generation identical on every platform.
+fn mix64(mut value: u64) -> u64 {
     value ^= value >> 30;
     value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     value ^= value >> 27;
     value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
     value ^= value >> 31;
-    6 + (value % 7) as i64
+    value
+}
+
+/// Stable 3D integer hash used by terrain, biome and cave noise.
+fn hash3(seed: u64, x: i64, y: i64, z: i64) -> u64 {
+    let value = seed
+        ^ (x as u64).wrapping_mul(0x9E37_79B1_85EB_CA87)
+        ^ (y as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        ^ (z as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+    mix64(value)
+}
+
+/// Surface height of a world column, in blocks. Spans `4..=13`.
+#[must_use]
+pub fn terrain_height(seed: u64, x: i64, z: i64) -> i64 {
+    let detail = (hash3(seed, x, 1, z) % 5) as i64;
+    let broad = (hash3(seed, x >> 3, 2, z >> 3) % 6) as i64;
+    4 + detail + broad
+}
+
+/// Biome of a world column. Regions are roughly 16 blocks wide.
+#[must_use]
+pub fn biome_at(seed: u64, x: i64, z: i64) -> Biome {
+    if hash3(seed, x >> 4, 3, z >> 4) % 5 == 0 {
+        Biome::Dunes
+    } else {
+        Biome::Meadow
+    }
+}
+
+fn is_cave(seed: u64, x: i64, y: i64, z: i64) -> bool {
+    hash3(seed, x, y, z) % 19 == 0
+}
+
+fn terrain_block(seed: u64, biome: Biome, x: i64, y: i64, z: i64, surface: i64) -> Block {
+    if y > surface {
+        return if y <= SEA_LEVEL {
+            Block::Water
+        } else {
+            Block::Air
+        };
+    }
+    if y == surface {
+        let beach = surface <= SEA_LEVEL + 1;
+        return match (biome, beach) {
+            (_, true) | (Biome::Dunes, _) => Block::Sand,
+            (Biome::Meadow, false) => Block::Grass,
+        };
+    }
+    if y > surface - 4 {
+        return match biome {
+            Biome::Meadow => Block::Soil,
+            Biome::Dunes => Block::Sand,
+        };
+    }
+    // Keep the bottom layer intact so caves never open into the void.
+    if y >= 1 && y < surface - 3 && is_cave(seed, x, y, z) {
+        return Block::Air;
+    }
+    Block::Stone
 }
 
 #[cfg(test)]
@@ -474,6 +605,88 @@ mod tests {
         let different_seed = Chunk::generate(43, -2, 0, 5);
         assert_eq!(a, b);
         assert_ne!(a, different_seed);
+    }
+
+    #[test]
+    fn water_fills_columns_below_sea_level() {
+        let chunk = Chunk::generate(9, 0, 0, 0);
+        let mut deepest = i64::MAX;
+        let mut found = false;
+        for z in 0..CHUNK_SIZE {
+            for x in 0..CHUNK_SIZE {
+                let surface = terrain_height(9, x as i64, z as i64);
+                deepest = deepest.min(surface);
+                if surface < SEA_LEVEL {
+                    let water = chunk.get(x, SEA_LEVEL as usize, z);
+                    assert_eq!(water, Some(Block::Water));
+                    let above = chunk.get(x, SEA_LEVEL as usize + 1, z);
+                    assert_eq!(above, Some(Block::Air));
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "starter world must contain water below sea level");
+        assert!(deepest < SEA_LEVEL);
+    }
+
+    #[test]
+    fn terrain_carves_caves_below_the_surface() {
+        let mut hidden_air = 0;
+        for chunk_x in 0..4 {
+            let chunk = Chunk::generate(31, chunk_x, 0, 0);
+            for z in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    let world_x = chunk_x as i64 * CHUNK_SIZE as i64 + x as i64;
+                    let surface = terrain_height(31, world_x, z as i64);
+                    for y in 0..CHUNK_SIZE {
+                        let world_y = y as i64;
+                        if world_y < surface - 3 && chunk.get(x, y, z) == Some(Block::Air) {
+                            hidden_air += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(hidden_air > 0, "underground air pockets are caves");
+    }
+
+    #[test]
+    fn biomes_produce_both_sand_and_grass() {
+        let mut sand = false;
+        let mut grass = false;
+        for chunk_x in 0..8 {
+            for chunk_z in 0..2 {
+                let chunk = Chunk::generate(77, chunk_x, 0, chunk_z);
+                sand |= chunk.blocks().contains(&Block::Sand);
+                grass |= chunk.blocks().contains(&Block::Grass);
+            }
+        }
+        assert!(sand, "dunes and beaches should contain sand");
+        assert!(grass, "meadow biome should contain grass");
+    }
+
+    #[test]
+    fn mesh_split_keeps_liquids_in_a_separate_pass() {
+        let mut chunk = Chunk::empty();
+        chunk.set(1, 1, 1, Block::Stone).expect("in bounds");
+        chunk.set(4, 1, 4, Block::Water).expect("in bounds");
+        let mesh = build_surface_mesh(&chunk, &ChunkNeighbors::default());
+        let (opaque, liquid) = mesh.split_liquid();
+        assert_eq!(opaque.quad_count(), 6);
+        assert_eq!(liquid.quad_count(), 6);
+        assert!(opaque.vertices.iter().all(|v| !v.block.is_liquid()));
+        assert!(liquid.vertices.iter().all(|v| v.block.is_liquid()));
+        assert_eq!(opaque.quad_count() + liquid.quad_count(), mesh.quad_count());
+    }
+
+    #[test]
+    fn water_and_air_are_not_solid() {
+        assert!(!Block::Air.is_solid());
+        assert!(!Block::Water.is_solid());
+        assert!(Block::Water.is_liquid());
+        assert!(!Block::Sand.is_liquid());
+        assert_eq!(Block::from_id(4), Some(Block::Water));
+        assert_eq!(Block::from_id(5), Some(Block::Sand));
     }
 
     #[test]
