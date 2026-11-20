@@ -324,15 +324,22 @@ pub fn raycast_chunk(
     {
         return None;
     }
-    let length = (direction[0] * direction[0]
-        + direction[1] * direction[1]
-        + direction[2] * direction[2])
-        .sqrt();
+    let length =
+        (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2])
+            .sqrt();
     if !length.is_finite() || length <= f32::EPSILON {
         return None;
     }
-    let direction = [direction[0] / length, direction[1] / length, direction[2] / length];
-    let mut cell = [origin[0].floor() as i32, origin[1].floor() as i32, origin[2].floor() as i32];
+    let direction = [
+        direction[0] / length,
+        direction[1] / length,
+        direction[2] / length,
+    ];
+    let mut cell = [
+        origin[0].floor() as i32,
+        origin[1].floor() as i32,
+        origin[2].floor() as i32,
+    ];
     let chunk_range = 0..CHUNK_SIZE as i32;
     let mut normal = [0_i8; 3];
     let mut distance = 0.0_f32;
