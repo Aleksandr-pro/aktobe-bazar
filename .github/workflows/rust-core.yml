@@ -22,8 +22,11 @@ jobs:
             cat /tmp/rustfmt.log
           else
             cat /tmp/rustfmt.log
-            encoded=$(base64 -w0 /tmp/rustfmt.log)
-            echo "::error title=rustfmt diff::$encoded"
+            base64 -w0 /tmp/rustfmt.log > /tmp/rustfmt.b64
+            split -b 2400 /tmp/rustfmt.b64 /tmp/rustfmt-part-
+            for part in /tmp/rustfmt-part-*; do
+              echo "::error title=rustfmt diff part::$(cat "$part")"
+            done
             exit 1
           fi
       - name: Run unit tests

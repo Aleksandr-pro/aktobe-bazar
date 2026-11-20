@@ -221,36 +221,21 @@ impl Face {
     fn corners(self, x: usize, y: usize, z: usize) -> [[u8; 3]; 4] {
         let (x, y, z) = (x as u8, y as u8, z as u8);
         match self {
-            Self::NegativeX => [
-                [x, y, z],
-                [x, y, z + 1],
-                [x, y + 1, z + 1],
-                [x, y + 1, z],
-            ],
+            Self::NegativeX => [[x, y, z], [x, y, z + 1], [x, y + 1, z + 1], [x, y + 1, z]],
             Self::PositiveX => [
                 [x + 1, y, z],
                 [x + 1, y + 1, z],
                 [x + 1, y + 1, z + 1],
                 [x + 1, y, z + 1],
             ],
-            Self::NegativeY => [
-                [x, y, z],
-                [x + 1, y, z],
-                [x + 1, y, z + 1],
-                [x, y, z + 1],
-            ],
+            Self::NegativeY => [[x, y, z], [x + 1, y, z], [x + 1, y, z + 1], [x, y, z + 1]],
             Self::PositiveY => [
                 [x, y + 1, z],
                 [x, y + 1, z + 1],
                 [x + 1, y + 1, z + 1],
                 [x + 1, y + 1, z],
             ],
-            Self::NegativeZ => [
-                [x, y, z],
-                [x, y + 1, z],
-                [x + 1, y + 1, z],
-                [x + 1, y, z],
-            ],
+            Self::NegativeZ => [[x, y, z], [x, y + 1, z], [x + 1, y + 1, z], [x + 1, y, z]],
             Self::PositiveZ => [
                 [x, y, z + 1],
                 [x + 1, y, z + 1],
@@ -282,11 +267,17 @@ fn sample_face_neighbor(
         Face::PositiveZ if z + 1 < CHUNK_SIZE => {
             return chunk.get(x, y, z + 1).unwrap_or(Block::Air)
         }
-        Face::NegativeX => neighbors.negative_x.and_then(|c| c.get(CHUNK_SIZE - 1, y, z)),
+        Face::NegativeX => neighbors
+            .negative_x
+            .and_then(|c| c.get(CHUNK_SIZE - 1, y, z)),
         Face::PositiveX => neighbors.positive_x.and_then(|c| c.get(0, y, z)),
-        Face::NegativeY => neighbors.negative_y.and_then(|c| c.get(x, CHUNK_SIZE - 1, z)),
+        Face::NegativeY => neighbors
+            .negative_y
+            .and_then(|c| c.get(x, CHUNK_SIZE - 1, z)),
         Face::PositiveY => neighbors.positive_y.and_then(|c| c.get(x, 0, z)),
-        Face::NegativeZ => neighbors.negative_z.and_then(|c| c.get(x, y, CHUNK_SIZE - 1)),
+        Face::NegativeZ => neighbors
+            .negative_z
+            .and_then(|c| c.get(x, y, CHUNK_SIZE - 1)),
         Face::PositiveZ => neighbors.positive_z.and_then(|c| c.get(x, y, 0)),
     };
     adjacent.unwrap_or(Block::Air)
