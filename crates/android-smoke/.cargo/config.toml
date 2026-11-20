@@ -1,0 +1,21 @@
+# Android 15+ devices can use 16 KB memory pages. Aligning the native library
+# segments to 16 KB keeps System.loadLibrary working on those devices even with
+# NDK versions that still default to 4 KB segments. The flags are passed
+# straight to the NDK linker driver, which is invoked without a clang wrapper.
+[target.armv7-linux-androideabi]
+rustflags = [
+    "-C", "link-arg=-z", "-C", "link-arg=max-page-size=16384",
+    "-C", "link-arg=-z", "-C", "link-arg=common-page-size=16384",
+]
+
+[target.aarch64-linux-android]
+rustflags = [
+    "-C", "link-arg=-z", "-C", "link-arg=max-page-size=16384",
+    "-C", "link-arg=-z", "-C", "link-arg=common-page-size=16384",
+]
+
+[target.x86_64-linux-android]
+rustflags = [
+    "-C", "link-arg=-z", "-C", "link-arg=max-page-size=16384",
+    "-C", "link-arg=-z", "-C", "link-arg=common-page-size=16384",
+]

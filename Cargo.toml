@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/voxel-core", "crates/mobile-game"]
+members = ["crates/voxel-core", "crates/mobile-game", "crates/android-smoke"]
 
 [profile.release]
 opt-level = 2
