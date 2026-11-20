@@ -106,7 +106,11 @@ jobs:
       - name: Install cargo-quad-apk
         run: |
           set -o pipefail
-          cargo install cargo-quad-apk --locked 2>&1 | tee /tmp/quad-apk-install.log
+          if ! cargo install --git https://github.com/not-fl3/cargo-quad-apk --locked --force 2>&1 | tee /tmp/quad-apk-install.log; then
+            echo "git install failed, falling back to the published crate"
+            cargo install cargo-quad-apk --locked --force 2>&1 | tee -a /tmp/quad-apk-install.log
+          fi
+          cargo quad-apk --version || true
 
       - name: Build release APK
         working-directory: crates/mobile-game
