@@ -1,0 +1,19 @@
+[package]
+name = "project-voxel-mobile"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+description = "Native Android prototype for Project Voxel"
+
+[dependencies]
+macroquad = "0.4"
+voxel-core = { path = "../voxel-core" }
+
+[package.metadata.android]
+package = "com.projectvoxel.mobile"
+label = "Project Voxel"
+
+[package.metadata.android.activity_attributes]
+"android:exported" = "true"
+"android:screenOrientation" = "userLandscape"

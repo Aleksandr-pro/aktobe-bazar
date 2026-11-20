@@ -10,7 +10,9 @@
 
 ## Сейчас
 
-Начата платформенно-независимая Rust-библиотека `crates/voxel-core`: типы блоков, чанк 16³, детерминированная генерация стартового рельефа и тесты. Нативный экран/рендерер и сенсорное управление — следующие этапы.
+Rust-основа `crates/voxel-core` содержит блоки, чанк 16³, детерминированную генерацию, surface mesh с отсечением скрытых граней, DDA-поиск блока и модульные тесты. Начат нативный клиент `crates/mobile-game` на Rust/Macroquad: 3D-чанк, виртуальный стик, обзор свайпом, прыжок, добыча и установка блоков.
+
+Клиент ориентирован на Android APK; WebView и браузерная оболочка не используются. Для сборки APK добавлен GitHub Actions workflow `.github/workflows/android-apk.yml`. Готового APK, проверенного на реальном телефоне, пока нет.
 
 См. [план мобильного проекта](docs/PROJECT_PLAN.md).
 
@@ -23,3 +25,5 @@ cargo test --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+Для нативного APK нужна Android-среда с NDK и `cargo-quad-apk`. В репозитории сборка автоматизирована в GitHub Actions workflow **Native Android APK**; после успешного запуска APK можно скачать из раздела Artifacts этого запуска.

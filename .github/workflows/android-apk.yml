@@ -1,0 +1,33 @@
+name: Native Android APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/**"
+      - ".github/workflows/android-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build native Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release APK with Android NDK
+        run: >-
+          docker run --rm
+          -v "${{ github.workspace }}:/root/src"
+          -w /root/src/crates/mobile-game
+          notfl3/cargo-apk
+          cargo quad-apk build --release
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-voxel-android-${{ github.sha }}
+          path: target/android-artifacts/release/apk/*.apk
+          if-no-files-found: error
+          retention-days: 14

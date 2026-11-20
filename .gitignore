@@ -1,0 +1,4 @@
+/target/
+*.apk
+*.aab
+*.so
