@@ -178,12 +178,15 @@ jobs:
         env:
           APK_PATH: ${{ steps.apk.outputs.path }}
         with:
-          api-level: 30
-          target: google_apis
+          api-level: 29
+          target: default
           arch: x86_64
-          profile: pixel_5
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048
+          emulator-boot-timeout: 1200
           disable-animations: true
-          emulator-options: -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
           script: |
             adb install -r "$APK_PATH"
             adb shell am start -W -n com.projectvoxel.mobile/.MainActivity
