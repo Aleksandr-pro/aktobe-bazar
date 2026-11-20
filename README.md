@@ -16,7 +16,8 @@ Rust-основа `crates/voxel-core` содержит блоки, чанк 16³
 
 ## Скачать APK
 
-- Прямая ссылка на сборку: **https://github.com/Aleksandr-pro/aktobe-bazar/releases/download/mobile-alpha-34/project-voxel-android.apk**
+- Прямая ссылка на сборку: **https://github.com/Aleksandr-pro/aktobe-bazar/releases/download/mobile-alpha-42/project-voxel-android.apk**
+- Диагностическая сборка (минимальная сцена на том же движке): https://github.com/Aleksandr-pro/aktobe-bazar/releases/download/mobile-alpha-42/project-voxel-smoke.apk
 - Страница релиза (все сборки): https://github.com/Aleksandr-pro/aktobe-bazar/releases
 
 APK подписан debug-ключом, архитектуры `arm64-v8a`, `armeabi-v7a` и `x86_64`, минимум Android 8.0 (API 26). Нативные библиотеки выровнены на 16 КБ, поэтому приложение запускается и на новых Android 15+ с 16-килобайтными страницами памяти. При установке нужно разрешить установку из неизвестных источников. На реальном телефоне сборка ещё не проверялась — это следующий шаг проверки.
