@@ -1,0 +1,10 @@
+[package]
+name = "voxel-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+description = "Platform-independent voxel world primitives for a mobile-first sandbox game"
+
+[lib]
+path = "src/lib.rs"
