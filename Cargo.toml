@@ -3,6 +3,5 @@ resolver = "2"
 members = ["crates/voxel-core", "crates/mobile-game"]
 
 [profile.release]
-opt-level = "s"
-lto = "thin"
-codegen-units = 1
+opt-level = 2
+strip = "debuginfo"

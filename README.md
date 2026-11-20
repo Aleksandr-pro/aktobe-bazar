@@ -26,4 +26,4 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Для нативного APK нужна Android-среда с NDK и `cargo-quad-apk`. В репозитории сборка автоматизирована в GitHub Actions workflow **Native Android APK**; после успешного запуска APK можно скачать из раздела Artifacts этого запуска.
+Нативный APK собирается workflow **Native Android APK** с Android SDK/NDK и `cargo-quad-apk`. Успешная сборка публикуется как GitHub pre-release asset (прямая APK-ссылка) и сохраняется в Artifacts запуска для диагностики.

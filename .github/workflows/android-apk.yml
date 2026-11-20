@@ -2,40 +2,64 @@ name: Native Android APK
 
 on:
   workflow_dispatch:
-  pull_request:
+  push:
+    branches: [main]
     paths:
       - "Cargo.toml"
       - "crates/**"
       - ".github/workflows/android-apk.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apk:
     name: Build native Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Build release APK with Android NDK
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: android-actions/setup-android@v3
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Android SDK and NDK packages
         run: |
-          if docker run --rm \
-            -v "${{ github.workspace }}:/root/src" \
-            -w /root/src/crates/mobile-game \
-            notfl3/cargo-apk \
-            bash -lc 'set -e; sdkmanager=$(find /opt -type f -name sdkmanager | head -n 1); test -n "$sdkmanager"; yes | "$sdkmanager" --sdk_root="$ANDROID_HOME" "platforms;android-36" "build-tools;36.0.0"; cargo quad-apk build --release' \
-            > /tmp/android-build.log 2>&1; then
-            cat /tmp/android-build.log
-          else
-            cat /tmp/android-build.log
-            encoded=$(base64 -w0 /tmp/android-build.log)
-            echo "::error title=Android build log::$encoded"
-            exit 1
-          fi
-      - name: Upload APK
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.2.12479018"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Install cargo-quad-apk
+        run: cargo install cargo-quad-apk --locked
+      - name: Build release APK
+        working-directory: crates/mobile-game
+        run: cargo quad-apk build --release
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: project-voxel-android-${{ github.sha }}
           path: target/android-artifacts/release/apk/*.apk
           if-no-files-found: error
           retention-days: 14
+      - name: Publish downloadable alpha APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk=$(find target/android-artifacts/release/apk -maxdepth 1 -type f -name '*.apk' -print -quit)
+          test -n "$apk"
+          cp "$apk" project-voxel-android.apk
+          tag="mobile-alpha-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" project-voxel-android.apk \
+            --target "$GITHUB_SHA" \
+            --title "Project Voxel Android alpha ${GITHUB_RUN_NUMBER}" \
+            --notes "Native Android alpha build from ${GITHUB_SHA}." \
+            --prerelease
