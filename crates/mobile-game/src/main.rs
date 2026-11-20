@@ -444,7 +444,13 @@ fn draw_fatal_overlay(message: &str) {
     let width = screen_width();
     let height = screen_height();
     draw_rectangle(0.0, 0.0, width, height, Color::new(0.06, 0.02, 0.03, 0.92));
-    draw_text("GAME ERROR", 28.0, 56.0, 34.0, Color::new(1.0, 0.55, 0.5, 1.0));
+    draw_text(
+        "GAME ERROR",
+        28.0,
+        56.0,
+        34.0,
+        Color::new(1.0, 0.55, 0.5, 1.0),
+    );
     let mut y = 100.0;
     for line in wrap_text(message, 46) {
         draw_text(&line, 28.0, y, 22.0, WHITE);
