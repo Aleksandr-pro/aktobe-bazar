@@ -282,11 +282,7 @@ fn rebuild_chunk_meshes(world: &mut World, meshes: &mut HashMap<ChunkPos, Mesh>,
         match world.mesh(position) {
             Some(data) if !data.indices.is_empty() => {
                 let origin = position.origin();
-                let offset = [
-                    origin[0] as f32,
-                    origin[1] as f32,
-                    origin[2] as f32,
-                ];
+                let offset = [origin[0] as f32, origin[1] as f32, origin[2] as f32];
                 meshes.insert(position, build_render_mesh(&data, offset));
                 built += 1;
             }
