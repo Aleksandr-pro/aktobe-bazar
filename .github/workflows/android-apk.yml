@@ -211,13 +211,13 @@ jobs:
         env:
           APK_PATH: ${{ steps.apk.outputs.path }}
         with:
-          api-level: 29
+          api-level: 28
           target: default
           arch: x86_64
           profile: pixel_2
           cores: 2
           ram-size: 2048
-          emulator-boot-timeout: 1200
+          emulator-boot-timeout: 1800
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
           script: |
