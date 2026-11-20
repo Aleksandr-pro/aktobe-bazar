@@ -37,7 +37,7 @@ jobs:
       - name: Install Rust Android target
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -80,28 +80,30 @@ jobs:
           set -euo pipefail
           trap 'echo "::error title=NDK wrappers::$BASH_COMMAND"' ERR
           bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          echo "NDK bin: $bin"
-          ls -1 "$bin" | sed -n '1,40p'
-          for tool in ar ranlib nm strip objdump readelf; do
-            target="$bin/aarch64-linux-android-$tool"
-            if [ ! -e "$target" ] && [ -e "$bin/llvm-$tool" ]; then
-              ln -s "llvm-$tool" "$target"
-            fi
-          done
           prebuilt="$(dirname "$bin")"
-          unwind="$(find "$prebuilt" -name 'libunwind.a' -path '*aarch64*' -print 2>/dev/null | sort | head -n 1)"
-          test -n "$unwind"
-          unwind_dir="$(dirname "$unwind")"
-          echo "libunwind directory: $unwind_dir"
-          if [ ! -e "$bin/aarch64-linux-android-ld" ]; then
-            {
-              echo "#!/bin/sh"
-              echo "exec \"$bin/ld.lld\" -L\"$unwind_dir\" \"\$@\""
-            } > "$bin/aarch64-linux-android-ld"
-            chmod +x "$bin/aarch64-linux-android-ld"
-            cat "$bin/aarch64-linux-android-ld"
-          fi
-          ls -1 "$unwind_dir"
+          for triple in aarch64-linux-android x86_64-linux-android; do
+            for tool in ar ranlib nm strip objdump readelf; do
+              target="$bin/$triple-$tool"
+              if [ ! -e "$target" ] && [ -e "$bin/llvm-$tool" ]; then
+                ln -s "llvm-$tool" "$target"
+              fi
+            done
+            case "$triple" in
+              aarch64-linux-android) arch=aarch64; clang="$bin/aarch64-linux-android26-clang" ;;
+              *) arch=x86_64; clang="$bin/x86_64-linux-android26-clang" ;;
+            esac
+            unwind="$(find "$prebuilt" -name 'libunwind.a' -path "*/$arch/*" -print 2>/dev/null | sort | head -n 1)"
+            test -n "$unwind"
+            linker="$bin/$triple-ld"
+            if [ ! -e "$linker" ]; then
+              {
+                echo "#!/bin/sh"
+                echo "exec \"$bin/ld.lld\" -L\"$(dirname "$unwind")\" \"\$@\""
+              } > "$linker"
+              chmod +x "$linker"
+            fi
+            echo "prepared $triple with $(basename "$unwind")"
+          done
 
       - name: Install cargo-quad-apk
         run: |
@@ -151,3 +153,51 @@ jobs:
             --title "Project Voxel Android alpha ${GITHUB_RUN_NUMBER}" \
             --notes "Native Android alpha build from ${GITHUB_SHA}." \
             --prerelease
+
+  emulator-smoke:
+    name: Launch APK on an Android emulator
+    needs: build-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Download built APK
+        uses: actions/download-artifact@v4
+        with:
+          pattern: project-voxel-android-*
+          merge-multiple: true
+          path: artifacts
+      - name: Locate APK
+        id: apk
+        run: |
+          apk=$(find artifacts -name '*.apk' -print -quit)
+          test -n "$apk"
+          echo "path=$apk" >> "$GITHUB_OUTPUT"
+          unzip -l "$apk" | grep -E "lib/|classes.dex" | sed -n '1,20p'
+      - name: Boot emulator and launch the app
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          APK_PATH: ${{ steps.apk.outputs.path }}
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          disable-animations: true
+          emulator-options: -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            adb install -r "$APK_PATH"
+            adb shell am start -W -n com.projectvoxel.mobile/.MainActivity
+            sleep 25
+            adb shell pidof com.projectvoxel.mobile > /tmp/pid.txt || true
+            adb logcat -d > /tmp/logcat.txt
+      - name: Report emulator result
+        if: always()
+        run: |
+          summary=$(grep -aiE "projectvoxel|SAMP|SAPP|FATAL|AndroidRuntime|UnsatisfiedLink|linker|panicked|RustAndroid|DEBUG" /tmp/logcat.txt 2>/dev/null | tail -c 3200 | tr '\n' '|' | sed 's/::/:/g' || true)
+          if [ -s /tmp/pid.txt ]; then
+            echo "app process is alive: $(cat /tmp/pid.txt)"
+            echo "::warning title=emulator logcat::${summary:-no matching log lines}"
+          else
+            echo "::error title=app did not stay alive::${summary:-no logcat captured}"
+            exit 1
+          fi

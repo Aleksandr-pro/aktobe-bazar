@@ -7,7 +7,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::{
-    build_surface_mesh, march_ray, Block, BlockHit, Chunk, ChunkNeighbors, MeshData, CHUNK_SIZE,
+    build_chunk_mesh, march_ray, Block, BlockHit, Chunk, ChunkMesh, ChunkNeighbors, MeshData,
+    CHUNK_SIZE,
 };
 
 /// Number of blocks along one chunk edge as a signed integer.
@@ -283,12 +284,18 @@ impl World {
         }
     }
 
-    /// Build the surface mesh for a loaded chunk, hiding seams against loaded
-    /// neighbors.
+    /// Build the surface meshes for a loaded chunk, hiding seams against
+    /// loaded neighbors and separating liquids for a blended draw pass.
     #[must_use]
-    pub fn mesh(&self, position: ChunkPos) -> Option<MeshData> {
+    pub fn mesh(&self, position: ChunkPos) -> Option<ChunkMesh> {
         let chunk = self.chunk(position)?;
-        Some(build_surface_mesh(chunk, &self.neighbors(position)))
+        Some(build_chunk_mesh(chunk, &self.neighbors(position)))
+    }
+
+    /// Convenience wrapper returning only the opaque pass.
+    #[must_use]
+    pub fn opaque_mesh(&self, position: ChunkPos) -> Option<MeshData> {
+        self.mesh(position).map(|mesh| mesh.opaque)
     }
 
     /// Cast a ray through world space and return the first solid block.
@@ -386,12 +393,12 @@ mod tests {
         world
             .set_block(15, 15, 0, Block::Stone)
             .expect("chunk loaded");
-        let alone = world.mesh(ChunkPos::new(0, 0, 0)).expect("chunk loaded");
+        let alone = world.opaque_mesh(ChunkPos::new(0, 0, 0)).expect("chunk loaded");
         world.load_chunk(ChunkPos::new(1, 0, 0));
         world
             .set_block(16, 15, 0, Block::Stone)
             .expect("chunk loaded");
-        let paired = world.mesh(ChunkPos::new(0, 0, 0)).expect("chunk loaded");
+        let paired = world.opaque_mesh(ChunkPos::new(0, 0, 0)).expect("chunk loaded");
         assert!(paired.quad_count() < alone.quad_count());
     }
 
