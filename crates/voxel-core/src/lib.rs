@@ -190,11 +190,7 @@ impl MeshData {
                 .vertices
                 .get(first)
                 .is_some_and(|vertex| vertex.block.is_liquid());
-            let target = if is_liquid {
-                &mut liquid
-            } else {
-                &mut opaque
-            };
+            let target = if is_liquid { &mut liquid } else { &mut opaque };
             let base = target.vertices.len() as u16;
             if let Some(face) = self.vertices.get(first..first + 4) {
                 target.vertices.extend_from_slice(face);
@@ -680,10 +676,7 @@ mod tests {
         assert_eq!(liquid.quad_count(), 6);
         assert!(opaque.vertices.iter().all(|v| !v.block.is_liquid()));
         assert!(liquid.vertices.iter().all(|v| v.block.is_liquid()));
-        assert_eq!(
-            opaque.quad_count() + liquid.quad_count(),
-            mesh.quad_count()
-        );
+        assert_eq!(opaque.quad_count() + liquid.quad_count(), mesh.quad_count());
     }
 
     #[test]

@@ -278,12 +278,7 @@ fn build_render_mesh(data: &MeshData, offset: [f32; 3]) -> Mesh {
             Vertex::new2(
                 position,
                 vec2(0.0, 0.0),
-                Color::new(
-                    base[0] * light,
-                    base[1] * light,
-                    base[2] * light,
-                    alpha,
-                ),
+                Color::new(base[0] * light, base[1] * light, base[2] * light, alpha),
             )
         })
         .collect();

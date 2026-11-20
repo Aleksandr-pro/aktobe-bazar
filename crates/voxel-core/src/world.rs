@@ -393,12 +393,16 @@ mod tests {
         world
             .set_block(15, 15, 0, Block::Stone)
             .expect("chunk loaded");
-        let alone = world.opaque_mesh(ChunkPos::new(0, 0, 0)).expect("chunk loaded");
+        let alone = world
+            .opaque_mesh(ChunkPos::new(0, 0, 0))
+            .expect("chunk loaded");
         world.load_chunk(ChunkPos::new(1, 0, 0));
         world
             .set_block(16, 15, 0, Block::Stone)
             .expect("chunk loaded");
-        let paired = world.opaque_mesh(ChunkPos::new(0, 0, 0)).expect("chunk loaded");
+        let paired = world
+            .opaque_mesh(ChunkPos::new(0, 0, 0))
+            .expect("chunk loaded");
         assert!(paired.quad_count() < alone.quad_count());
     }
 
