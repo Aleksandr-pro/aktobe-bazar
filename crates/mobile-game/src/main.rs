@@ -398,35 +398,44 @@ fn apply_block_action(
         .is_some_and(|previous| !previous.is_solid() && previous != selected)
 }
 
-/// Run one frame of world simulation, catching panics so a bug shows up on the
-/// phone screen instead of closing the app without a trace.
-fn simulate_frame(
-    world: &mut World,
-    player: &mut Player,
-    meshes: &mut HashMap<ChunkPos, ChunkRender>,
-    streamed_center: &mut ChunkPos,
-    spawned: &mut bool,
-    input: &FrameInput,
-    selected_slot: usize,
-    delta_time: f32,
-) {
-    let center = player.chunk_position();
-    if center != *streamed_center {
-        world.stream_around(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL);
-        for position in world.unload_outside(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL) {
-            meshes.remove(&position);
-        }
-        *streamed_center = center;
-    }
-    if !*spawned && world.loaded_chunk_count() > 0 {
-        *player = Player::spawn(world);
-        *spawned = true;
-    }
+/// Streaming, physics and block edits for one frame.
+///
+/// Kept in its own struct so the frame can be wrapped in `catch_unwind` with a
+/// single value, and so a phone-only panic turns into an on-screen message.
+struct Simulation<'a> {
+    world: &'a mut World,
+    player: &'a mut Player,
+    meshes: &'a mut HashMap<ChunkPos, ChunkRender>,
+    streamed_center: &'a mut ChunkPos,
+    spawned: &'a mut bool,
+}
 
-    player.update(world, input, delta_time);
-    let selected_block = [Block::Grass, Block::Soil, Block::Stone][selected_slot];
-    apply_block_action(world, player, input, selected_block);
-    rebuild_chunk_meshes(world, meshes, REMESH_BUDGET);
+impl Simulation<'_> {
+    fn step(&mut self, input: &FrameInput, selected_slot: usize, delta_time: f32) {
+        let center = self.player.chunk_position();
+        if center != *self.streamed_center {
+            self.world
+                .stream_around(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL);
+            for position in self.world.unload_outside(
+                center,
+                RENDER_RADIUS,
+                SURFACE_LEVEL,
+                SURFACE_LEVEL,
+            ) {
+                self.meshes.remove(&position);
+            }
+            *self.streamed_center = center;
+        }
+        if !*self.spawned && self.world.loaded_chunk_count() > 0 {
+            *self.player = Player::spawn(self.world);
+            *self.spawned = true;
+        }
+
+        self.player.update(self.world, input, delta_time);
+        let selected_block = [Block::Grass, Block::Soil, Block::Stone][selected_slot];
+        apply_block_action(self.world, self.player, input, selected_block);
+        rebuild_chunk_meshes(self.world, self.meshes, REMESH_BUDGET);
+    }
 }
 
 fn describe_panic(payload: &(dyn Any + Send)) -> String {
@@ -609,16 +618,14 @@ async fn main() {
 
         if fatal.is_none() {
             let outcome = catch_unwind(AssertUnwindSafe(|| {
-                simulate_frame(
-                    &mut world,
-                    &mut player,
-                    &mut meshes,
-                    &mut streamed_center,
-                    &mut spawned,
-                    &input,
-                    selected_slot,
-                    delta_time,
-                );
+                let mut simulation = Simulation {
+                    world: &mut world,
+                    player: &mut player,
+                    meshes: &mut meshes,
+                    streamed_center: &mut streamed_center,
+                    spawned: &mut spawned,
+                };
+                simulation.step(&input, selected_slot, delta_time);
             }));
             if let Err(payload) = outcome {
                 fatal = Some(describe_panic(payload.as_ref()));
