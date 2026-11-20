@@ -71,6 +71,23 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
           echo "Using NDK: $ndk"
 
+      - name: Add NDK toolchain compatibility wrappers
+        run: |
+          set -euo pipefail
+          bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          ls -1 "$bin" | head -n 40
+          for tool in ar ranlib nm strip objdump readelf; do
+            target="$bin/aarch64-linux-android-$tool"
+            if [ ! -e "$target" ] && [ -e "$bin/llvm-$tool" ]; then
+              ln -s "llvm-$tool" "$target"
+              echo "linked $target -> llvm-$tool"
+            fi
+          done
+          if [ ! -e "$bin/aarch64-linux-android-ld" ] && [ -e "$bin/ld.lld" ]; then
+            ln -s "ld.lld" "$bin/aarch64-linux-android-ld"
+            echo "linked aarch64-linux-android-ld -> ld.lld"
+          fi
+
       - name: Install cargo-quad-apk
         run: |
           set -o pipefail
