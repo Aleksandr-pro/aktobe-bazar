@@ -511,7 +511,6 @@ async fn main() {
     let mut selected_slot = 0_usize;
     let mut meshes: HashMap<ChunkPos, ChunkRender> = HashMap::new();
     let mut streamed_center = spawn_chunk;
-    rebuild_chunk_meshes(&mut world, &mut meshes, usize::MAX);
 
     loop {
         let delta_time = get_frame_time().min(0.05);

@@ -39,7 +39,7 @@ jobs:
       - name: Install Rust Android target
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,x86_64-linux-android
+          targets: armv7-linux-androideabi,aarch64-linux-android,x86_64-linux-android
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -83,29 +83,34 @@ jobs:
           trap 'echo "::error title=NDK wrappers::$BASH_COMMAND"' ERR
           bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           prebuilt="$(dirname "$bin")"
-          for triple in aarch64-linux-android x86_64-linux-android; do
-            for tool in ar ranlib nm strip objdump readelf; do
-              target="$bin/$triple-$tool"
-              if [ ! -e "$target" ] && [ -e "$bin/llvm-$tool" ]; then
-                ln -s "llvm-$tool" "$target"
-              fi
+          # cargo triple | ndk clang prefix | unwind arch directory
+          while read -r triple clang_prefix arch; do
+            for prefix in "$triple" "$clang_prefix" "$(echo "$triple" | sed 's/^armv7/arm/')"; do
+              for tool in ar ranlib nm strip objdump readelf; do
+                target="$bin/$prefix-$tool"
+                if [ ! -e "$target" ] && [ -e "$bin/llvm-$tool" ]; then
+                  ln -s "llvm-$tool" "$target"
+                fi
+              done
             done
-            case "$triple" in
-              aarch64-linux-android) arch=aarch64; clang="$bin/aarch64-linux-android26-clang" ;;
-              *) arch=x86_64; clang="$bin/x86_64-linux-android26-clang" ;;
-            esac
             unwind="$(find "$prebuilt" -name 'libunwind.a' -path "*/$arch/*" -print 2>/dev/null | sort | head -n 1)"
             test -n "$unwind"
-            linker="$bin/$triple-ld"
-            if [ ! -e "$linker" ]; then
-              {
-                echo "#!/bin/sh"
-                echo "exec \"$bin/ld.lld\" -L\"$(dirname "$unwind")\" \"\$@\""
-              } > "$linker"
-              chmod +x "$linker"
-            fi
-            echo "prepared $triple with $(basename "$unwind")"
-          done
+            for prefix in "$triple" "$clang_prefix" "$(echo "$triple" | sed 's/^armv7/arm/')"; do
+              linker="$bin/$prefix-ld"
+              if [ ! -e "$linker" ]; then
+                {
+                  echo "#!/bin/sh"
+                  echo "exec \"$bin/ld.lld\" -L\"$(dirname "$unwind")\" \"\$@\""
+                } > "$linker"
+                chmod +x "$linker"
+              fi
+            done
+            echo "prepared $triple"
+          done <<'TARGETS'
+          armv7-linux-androideabi armv7a-linux-androideabi arm
+          aarch64-linux-android aarch64-linux-android aarch64
+          x86_64-linux-android x86_64-linux-android x86_64
+          TARGETS
 
       - name: Install cargo-quad-apk
         run: |
@@ -193,8 +198,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch'
       || contains(github.event.head_commit.message, '[emulator]')
-      || contains(github.event.pull_request.title, '[emulator]')
-      || contains(github.event.pull_request.body, '[emulator]')
+      || contains(github.event.pull_request.labels.*.name, 'run-emulator')
     needs: build-apk
     runs-on: ubuntu-latest
     timeout-minutes: 40
