@@ -78,33 +78,30 @@ jobs:
       - name: Add NDK toolchain compatibility wrappers
         run: |
           set -euo pipefail
+          trap 'echo "::error title=NDK wrappers::$BASH_COMMAND"' ERR
           bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          ls -1 "$bin" | head -n 40
+          echo "NDK bin: $bin"
+          ls -1 "$bin" | sed -n '1,40p'
           for tool in ar ranlib nm strip objdump readelf; do
             target="$bin/aarch64-linux-android-$tool"
             if [ ! -e "$target" ] && [ -e "$bin/llvm-$tool" ]; then
               ln -s "llvm-$tool" "$target"
-              echo "linked $target -> llvm-$tool"
             fi
           done
-          sysroot="$(dirname "$bin")/sysroot"
-          clang_lib="$(dirname "$bin")"/lib/clang/*/lib/linux/aarch64
-          test -d $clang_lib
+          prebuilt="$(dirname "$bin")"
+          unwind="$(find "$prebuilt" -name 'libunwind.a' -path '*aarch64*' -print 2>/dev/null | sort | head -n 1)"
+          test -n "$unwind"
+          unwind_dir="$(dirname "$unwind")"
+          echo "libunwind directory: $unwind_dir"
           if [ ! -e "$bin/aarch64-linux-android-ld" ]; then
             {
-              echo '#!/bin/sh'
-              echo "exec \"$bin/ld.lld\" \\"
-              for extra in $clang_lib \
-                "$sysroot/usr/lib/aarch64-linux-android/26" \
-                "$sysroot/usr/lib/aarch64-linux-android"; do
-                echo "  -L\"$extra\" \\"
-              done
-              echo '  "$@"'
+              echo "#!/bin/sh"
+              echo "exec \"$bin/ld.lld\" -L\"$unwind_dir\" \"\$@\""
             } > "$bin/aarch64-linux-android-ld"
             chmod +x "$bin/aarch64-linux-android-ld"
             cat "$bin/aarch64-linux-android-ld"
           fi
-          ls "$clang_lib" | head
+          ls -1 "$unwind_dir"
 
       - name: Install cargo-quad-apk
         run: |
