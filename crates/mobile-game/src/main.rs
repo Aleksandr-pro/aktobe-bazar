@@ -297,7 +297,11 @@ struct ChunkRender {
 }
 
 /// Rebuild a bounded number of dirty chunk meshes so streaming stays smooth.
-fn rebuild_chunk_meshes(world: &mut World, meshes: &mut HashMap<ChunkPos, Mesh>, budget: usize) {
+fn rebuild_chunk_meshes(
+    world: &mut World,
+    meshes: &mut HashMap<ChunkPos, ChunkRender>,
+    budget: usize,
+) {
     let dirty = world.take_dirty();
     let mut built = 0;
     for position in dirty {
