@@ -1,0 +1,35 @@
+name: Rust core
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Format, test, and lint voxel core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: |
+          if cargo fmt --all -- --check > /tmp/rustfmt.log 2>&1; then
+            cat /tmp/rustfmt.log
+          else
+            cat /tmp/rustfmt.log
+            base64 -w0 /tmp/rustfmt.log > /tmp/rustfmt.b64
+            split -b 2400 /tmp/rustfmt.b64 /tmp/rustfmt-part-
+            for part in /tmp/rustfmt-part-*; do
+              echo "::error title=rustfmt diff part::$(cat "$part")"
+            done
+            exit 1
+          fi
+      - name: Run unit tests
+        run: cargo test --workspace
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
