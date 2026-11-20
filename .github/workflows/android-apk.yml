@@ -188,7 +188,7 @@ jobs:
 
   emulator-smoke:
     name: Launch APK on an Android emulator
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[emulator]')
     needs: build-apk
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -221,15 +221,19 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
           script: |
-            adb install -r "$APK_PATH"
-            adb shell am start -W -n com.projectvoxel.mobile/.MainActivity
+            adb install -r "$APK_PATH" > /tmp/install.txt 2>&1 || true
+            adb shell am start -W -n com.projectvoxel.mobile/.MainActivity > /tmp/start.txt 2>&1 || true
             sleep 25
-            adb shell pidof com.projectvoxel.mobile > /tmp/pid.txt || true
-            adb logcat -d > /tmp/logcat.txt
+            adb shell pidof com.projectvoxel.mobile > /tmp/pid.txt 2>/dev/null || true
+            adb logcat -d > /tmp/logcat.txt 2>/dev/null || true
       - name: Report emulator result
         if: always()
         run: |
-          summary=$(grep -aiE "projectvoxel|SAMP|SAPP|FATAL|AndroidRuntime|UnsatisfiedLink|linker|panicked|RustAndroid|DEBUG" /tmp/logcat.txt 2>/dev/null | tail -c 3200 | tr '\n' '|' | sed 's/::/:/g' || true)
+          summary=$(grep -aiE "projectvoxel|SAPP|FATAL|AndroidRuntime|UnsatisfiedLink|linker|panicked|RustAndroid|DEBUG|miniquad" /tmp/logcat.txt 2>/dev/null | tail -c 3200 | tr '\n' '|' | sed 's/::/:/g' || true)
+          install=$(tail -c 600 /tmp/install.txt 2>/dev/null | tr '\n' '|' | sed 's/::/:/g' || true)
+          start=$(tail -c 900 /tmp/start.txt 2>/dev/null | tr '\n' '|' | sed 's/::/:/g' || true)
+          echo "::warning title=adb install::${install:-no install output}"
+          echo "::warning title=am start::${start:-no start output}"
           if [ -s /tmp/pid.txt ]; then
             echo "app process is alive: $(cat /tmp/pid.txt)"
             echo "::warning title=emulator logcat::${summary:-no matching log lines}"
