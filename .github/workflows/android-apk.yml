@@ -1,5 +1,7 @@
 name: Native Android APK
 
+# Emulator runs are opt-in: put [emulator] in the commit message.
+
 on:
   workflow_dispatch:
   pull_request:
