@@ -416,12 +416,10 @@ impl Simulation<'_> {
         if center != *self.streamed_center {
             self.world
                 .stream_around(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL);
-            for position in self.world.unload_outside(
-                center,
-                RENDER_RADIUS,
-                SURFACE_LEVEL,
-                SURFACE_LEVEL,
-            ) {
+            for position in
+                self.world
+                    .unload_outside(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL)
+            {
                 self.meshes.remove(&position);
             }
             *self.streamed_center = center;
