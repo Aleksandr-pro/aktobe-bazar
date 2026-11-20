@@ -249,13 +249,16 @@ impl World {
         level_to: i32,
     ) -> Vec<ChunkPos> {
         let radius = radius.max(0);
-        let max_distance = radius * radius;
         let stale: Vec<ChunkPos> = self
             .chunks
             .keys()
             .copied()
             .filter(|position| {
-                position.horizontal_distance_squared(center) > max_distance
+                // Chebyshev distance keeps the unload ring shaped exactly like
+                // the square ring produced by `stream_around`, so the two never
+                // fight over the same chunks.
+                (position.x - center.x).abs() > radius
+                    || (position.z - center.z).abs() > radius
                     || position.y < level_from
                     || position.y > level_to
             })
