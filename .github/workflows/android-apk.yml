@@ -160,6 +160,8 @@ jobs:
             echo "::warning title=dynamic symbols::total=$total java=$jni quad_main=$quad"
             grep -a "Java_" /tmp/dynsyms.txt | awk '{print $8}' | head -n 6 | tr '\n' ' ' > /tmp/jni-names.txt
             echo "::warning title=JNI names::$(cat /tmp/jni-names.txt)"
+            align=$("$readelf" -l /tmp/app.so | grep -a "LOAD" | awk '{print $NF}' | sort -u | tr '\n' ' ')
+            echo "::warning title=native library LOAD alignment::${align:-unknown}"
             needed=$("$readelf" -d /tmp/app.so | grep -a NEEDED | tr -s ' ' | tr '\n' ' ')
             echo "::warning title=NEEDED libraries::${needed:-none}"
           fi

@@ -14,7 +14,7 @@ voxel-core = { path = "../voxel-core" }
 package_name = "com.projectvoxel.mobile"
 label = "Project Voxel"
 android_version = 36
-target_sdk_version = 36
+target_sdk_version = 34
 min_sdk_version = 26
 build_targets = [
     "armv7-linux-androideabi",
