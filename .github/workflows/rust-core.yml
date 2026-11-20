@@ -30,6 +30,20 @@ jobs:
             exit 1
           fi
       - name: Run unit tests
-        run: cargo test --workspace
+        run: |
+          set -o pipefail
+          if cargo test --workspace 2>&1 | tee /tmp/test.log; then
+            exit 0
+          fi
+          chunk="$(tail -c 3500 /tmp/test.log | tr '\n' '|' | sed 's/::/:/g')"
+          echo "::error title=cargo test log::${chunk:-no test output captured}"
+          exit 1
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          set -o pipefail
+          if cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee /tmp/clippy.log; then
+            exit 0
+          fi
+          chunk="$(tail -c 3500 /tmp/clippy.log | tr '\n' '|' | sed 's/::/:/g')"
+          echo "::error title=cargo clippy log::${chunk:-no clippy output captured}"
+          exit 1
