@@ -129,6 +129,35 @@ jobs:
             echo "::error title=$log::${chunk:-empty}"
           done
 
+      - name: Inspect packaged APK
+        run: |
+          set -euo pipefail
+          apk=$(find target/android-artifacts/release/apk -maxdepth 1 -name '*.apk' -print -quit)
+          test -n "$apk"
+          aapt2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          "$aapt2" dump badging "$apk" > /tmp/badging.txt 2>&1 || true
+          badging=$(grep -aE "package:|launchable-activity|sdkVersion|native-code|uses-feature" /tmp/badging.txt | tr '\n' '|' | sed 's/::/:/g' | tail -c 900)
+          echo "::warning title=aapt2 badging::${badging:-no badging output}"
+          entries=$(unzip -l "$apk" | awk 'NR>3 {print $4}' | grep -aE "^(lib/|classes|AndroidManifest|resources)" | tr '\n' ' ')
+          echo "::warning title=APK entries::${entries:-empty}"
+          so=$(unzip -l "$apk" | awk 'NR>3 {print $4}' | grep -aE "^lib/arm64-v8a/.*\.so$" | head -n 1 || true)
+          echo "::warning title=native library::${so:-missing}"
+          if [ -n "$so" ]; then
+            unzip -p "$apk" "$so" > /tmp/app.so
+            readelf="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+            [ -x "$readelf" ] || readelf=readelf
+            jni=$("$readelf" --dyn-syms /tmp/app.so | grep -ac "Java_quad_native" || true)
+            echo "::warning title=JNI symbols found::$jni"
+            "$readelf" --dyn-syms /tmp/app.so | grep -a "Java_quad_native" | awk '{print $8}' | head -n 4 | tr '\n' ' ' > /tmp/jni-names.txt
+            echo "::warning title=JNI names::$(cat /tmp/jni-names.txt)"
+            needed=$("$readelf" -d /tmp/app.so | grep -a NEEDED | tr -s ' ' | tr '\n' ' ')
+            echo "::warning title=NEEDED libraries::${needed:-none}"
+          fi
+          if unzip -p "$apk" classes.dex > /tmp/classes.dex 2>/dev/null; then
+            names=$(strings -a /tmp/classes.dex | grep -aiE "project|voxel|quad|MainActivity" | sort -u | head -n 12 | tr '\n' ' ')
+            echo "::warning title=dex strings::${names:-none}"
+          fi
+
       - name: Upload APK artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -156,6 +185,7 @@ jobs:
 
   emulator-smoke:
     name: Launch APK on an Android emulator
+    if: github.event_name == 'workflow_dispatch'
     needs: build-apk
     runs-on: ubuntu-latest
     timeout-minutes: 40
