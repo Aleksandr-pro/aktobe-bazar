@@ -87,6 +87,24 @@ jobs:
               echo "linked $target -> llvm-$tool"
             fi
           done
+          sysroot="$(dirname "$bin")/sysroot"
+          clang_lib="$(dirname "$bin")"/lib/clang/*/lib/linux/aarch64
+          test -d $clang_lib
+          if [ ! -e "$bin/aarch64-linux-android-ld" ]; then
+            {
+              echo '#!/bin/sh'
+              echo "exec \"$bin/ld.lld\" \\"
+              for extra in $clang_lib \
+                "$sysroot/usr/lib/aarch64-linux-android/26" \
+                "$sysroot/usr/lib/aarch64-linux-android"; do
+                echo "  -L\"$extra\" \\"
+              done
+              echo '  "$@"'
+            } > "$bin/aarch64-linux-android-ld"
+            chmod +x "$bin/aarch64-linux-android-ld"
+            cat "$bin/aarch64-linux-android-ld"
+          fi
+          ls "$clang_lib" | head
 
       - name: Install cargo-quad-apk
         run: |
