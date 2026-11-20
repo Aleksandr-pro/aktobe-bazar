@@ -123,7 +123,11 @@ impl Player {
         let z = 8.5;
         let surface_y = (0..CHUNK_SIZE)
             .rev()
-            .find(|&y| chunk.get(x as usize, y, z as usize).is_some_and(Block::is_solid))
+            .find(|&y| {
+                chunk
+                    .get(x as usize, y, z as usize)
+                    .is_some_and(Block::is_solid)
+            })
             .unwrap_or(0);
         Self {
             position: vec3(x, surface_y as f32 + 1.02, z + 3.0),
@@ -136,7 +140,11 @@ impl Player {
 
     fn forward(&self) -> Vec3 {
         let horizontal = self.pitch.cos();
-        vec3(self.yaw.sin() * horizontal, self.pitch.sin(), self.yaw.cos() * horizontal)
+        vec3(
+            self.yaw.sin() * horizontal,
+            self.pitch.sin(),
+            self.yaw.cos() * horizontal,
+        )
     }
 
     fn eye_position(&self) -> Vec3 {
@@ -287,7 +295,10 @@ fn apply_block_action(
         ]
     };
     let chunk_range = 0..CHUNK_SIZE as i32;
-    if target.iter().any(|coordinate| !chunk_range.contains(coordinate)) {
+    if target
+        .iter()
+        .any(|coordinate| !chunk_range.contains(coordinate))
+    {
         return false;
     }
 
@@ -304,11 +315,21 @@ fn apply_block_action(
         if intersects_player {
             return false;
         }
-        return chunk.set(target[0] as usize, target[1] as usize, target[2] as usize, selected)
-            == Some(Block::Air);
+        return chunk.set(
+            target[0] as usize,
+            target[1] as usize,
+            target[2] as usize,
+            selected,
+        ) == Some(Block::Air);
     }
 
-    chunk.set(target[0] as usize, target[1] as usize, target[2] as usize, Block::Air)
+    chunk
+        .set(
+            target[0] as usize,
+            target[1] as usize,
+            target[2] as usize,
+            Block::Air,
+        )
         .is_some_and(Block::is_solid)
 }
 
@@ -366,9 +387,29 @@ fn draw_touch_ui(input: &FrameInput, selected_slot: usize) {
         draw_text(labels[slot], x + 27.0, top + 31.0, 20.0, WHITE);
     }
     draw_text("PROJECT VOXEL  /  MOBILE TEST", 22.0, 36.0, 19.0, WHITE);
-    draw_text("Touch left to move  ·  drag right to look", 22.0, 60.0, 15.0, WHITE);
-    draw_line(width * 0.5 - 8.0, height * 0.5, width * 0.5 + 8.0, height * 0.5, 2.0, WHITE);
-    draw_line(width * 0.5, height * 0.5 - 8.0, width * 0.5, height * 0.5 + 8.0, 2.0, WHITE);
+    draw_text(
+        "Touch left to move  ·  drag right to look",
+        22.0,
+        60.0,
+        15.0,
+        WHITE,
+    );
+    draw_line(
+        width * 0.5 - 8.0,
+        height * 0.5,
+        width * 0.5 + 8.0,
+        height * 0.5,
+        2.0,
+        WHITE,
+    );
+    draw_line(
+        width * 0.5,
+        height * 0.5 - 8.0,
+        width * 0.5,
+        height * 0.5 + 8.0,
+        2.0,
+        WHITE,
+    );
 }
 
 fn block_color(block: Block) -> Color {
