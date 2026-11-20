@@ -10,13 +10,13 @@
 
 ## Сейчас
 
-Rust-основа `crates/voxel-core` содержит блоки, чанк 16³, детерминированную генерацию, surface mesh с отсечением скрытых граней, DDA-поиск блока и модульные тесты. Начат нативный клиент `crates/mobile-game` на Rust/Macroquad: 3D-чанк, виртуальный стик, обзор свайпом, прыжок, добыча и установка блоков.
+Rust-основа `crates/voxel-core` содержит блоки, чанк 16³, детерминированную генерацию, surface mesh с отсечением скрытых граней, DDA-поиск блока, потоковый `World` из чанков и модульные тесты. Нативный клиент `crates/mobile-game` на Rust/Macroquad держит кольцо чанков вокруг игрока (7×7), перестраивает только изменённые меши с бюджетом на кадр, поддерживает виртуальный стик, обзор свайпом, прыжок, добычу и установку блоков.
 
 Клиент собирается только как нативный Android APK; WebView и браузерная оболочка не используются. Сборку выполняет GitHub Actions workflow `.github/workflows/android-apk.yml` (Rust `aarch64-linux-android`, Android SDK 36, NDK 27, `cargo-quad-apk`).
 
 ## Скачать APK
 
-- Прямая ссылка на сборку: **https://github.com/Aleksandr-pro/aktobe-bazar/releases/download/mobile-alpha-16/project-voxel-android.apk**
+- Прямая ссылка на сборку: **https://github.com/Aleksandr-pro/aktobe-bazar/releases/download/mobile-alpha-18/project-voxel-android.apk**
 - Страница релиза (все сборки): https://github.com/Aleksandr-pro/aktobe-bazar/releases
 
 APK подписан debug-ключом, архитектура `arm64-v8a`, минимум Android 8.0 (API 26). При установке нужно разрешить установку из неизвестных источников. На реальном телефоне сборка ещё не проверялась — это следующий шаг проверки.
