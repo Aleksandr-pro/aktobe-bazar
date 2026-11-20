@@ -1,7 +1,0 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-* { touch-action: manipulation; }
-html, body { overscroll-behavior: none; }
-::-webkit-scrollbar { display: none; }
