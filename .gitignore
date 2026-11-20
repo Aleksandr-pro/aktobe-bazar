@@ -2,3 +2,4 @@
 *.apk
 *.aab
 *.so
+node_modules/
