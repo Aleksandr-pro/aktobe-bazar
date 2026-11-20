@@ -5,8 +5,13 @@ on:
     inputs:
       branch:
         description: Branch to format (never main)
-        required: true
+        required: false
         type: string
+  push:
+    branches-ignore: [main]
+    paths:
+      - "crates/**"
+      - ".github/workflows/format.yml"
 
 permissions:
   contents: write
@@ -14,13 +19,13 @@ permissions:
 jobs:
   format:
     name: Apply rustfmt
-    if: github.event.inputs.branch != 'main'
+    if: github.event.inputs.branch != 'main' && github.ref_name != 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.branch }}
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
           token: ${{ github.token }}
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -37,4 +42,4 @@ jobs:
           fi
           git add -A
           git commit -m "Apply rustfmt"
-          git push origin "HEAD:${{ github.event.inputs.branch }}"
+          git push origin "HEAD:${{ github.event.inputs.branch || github.ref_name }}"
