@@ -271,11 +271,7 @@ fn build_render_mesh(data: &MeshData, offset: [f32; 3]) -> Mesh {
 }
 
 /// Rebuild a bounded number of dirty chunk meshes so streaming stays smooth.
-fn rebuild_chunk_meshes(
-    world: &mut World,
-    meshes: &mut HashMap<ChunkPos, Mesh>,
-    budget: usize,
-) {
+fn rebuild_chunk_meshes(world: &mut World, meshes: &mut HashMap<ChunkPos, Mesh>, budget: usize) {
     let dirty = world.take_dirty();
     let mut built = 0;
     for position in dirty {
@@ -325,7 +321,12 @@ fn apply_block_action(
             return false;
         }
         return world
-            .set_block(hit.position[0], hit.position[1], hit.position[2], Block::Air)
+            .set_block(
+                hit.position[0],
+                hit.position[1],
+                hit.position[2],
+                Block::Air,
+            )
             .is_some_and(Block::is_solid);
     }
 
@@ -480,7 +481,8 @@ async fn main() {
         let center = player.chunk_position();
         if center != streamed_center {
             world.stream_around(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL);
-            for position in world.unload_outside(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL)
+            for position in
+                world.unload_outside(center, RENDER_RADIUS, SURFACE_LEVEL, SURFACE_LEVEL)
             {
                 meshes.remove(&position);
             }

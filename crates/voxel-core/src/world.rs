@@ -116,8 +116,11 @@ impl World {
     /// Read a world-space block. Unloaded chunks read as `None`.
     #[must_use]
     pub fn block(&self, x: i32, y: i32, z: i32) -> Option<Block> {
-        self.chunk(ChunkPos::from_world(x, y, z))?
-            .get(chunk_local(x), chunk_local(y), chunk_local(z))
+        self.chunk(ChunkPos::from_world(x, y, z))?.get(
+            chunk_local(x),
+            chunk_local(y),
+            chunk_local(z),
+        )
     }
 
     /// Read a world-space block, treating unloaded chunks as air.
@@ -310,7 +313,10 @@ mod tests {
     fn chunk_positions_use_euclidean_division_for_negative_coordinates() {
         assert_eq!(ChunkPos::from_world(0, 0, 0), ChunkPos::new(0, 0, 0));
         assert_eq!(ChunkPos::from_world(15, 16, -1), ChunkPos::new(0, 1, -1));
-        assert_eq!(ChunkPos::from_world(-1, -16, -17), ChunkPos::new(-1, -1, -2));
+        assert_eq!(
+            ChunkPos::from_world(-1, -16, -17),
+            ChunkPos::new(-1, -1, -2)
+        );
         assert_eq!(chunk_local(-1), CHUNK_SIZE - 1);
         assert_eq!(chunk_local(16), 0);
         assert_eq!(ChunkPos::new(-1, 0, -2).origin(), [-16, 0, -32]);
@@ -322,7 +328,9 @@ mod tests {
         let created = world.stream_around(ChunkPos::new(0, 0, 0), 1, 0, 0);
         assert_eq!(created.len(), 9);
         assert_eq!(world.loaded_chunk_count(), 9);
-        assert!(world.stream_around(ChunkPos::new(0, 0, 0), 1, 0, 0).is_empty());
+        assert!(world
+            .stream_around(ChunkPos::new(0, 0, 0), 1, 0, 0)
+            .is_empty());
         assert_eq!(world.loaded_chunk_count(), 9);
     }
 
@@ -388,9 +396,7 @@ mod tests {
         world.stream_around(ChunkPos::new(0, 0, 0), 1, 0, 0);
         // Clear a corridor so the ray can travel into the next chunk.
         for x in 4..18 {
-            world
-                .set_block(x, 13, 4, Block::Air)
-                .expect("chunk loaded");
+            world.set_block(x, 13, 4, Block::Air).expect("chunk loaded");
         }
         world
             .set_block(18, 13, 4, Block::Stone)
